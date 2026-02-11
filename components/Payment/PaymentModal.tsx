@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { MembershipTier, BankSettings } from '../../types';
 import { MEMBERSHIP_CONFIG } from '../../constants';
@@ -27,14 +26,17 @@ const PaymentModal: React.FC<PaymentModalProps> = ({ tier, onSuccess, onCancel }
     setIsProcessing(true);
     try {
       const userStr = localStorage.getItem('gnm_user');
-      const userEmail = userStr ? JSON.parse(userStr).email : 'invitado@gnm.com';
+      const user = userStr ? JSON.parse(userStr) : null;
+      const userEmail = user ? user.email : 'invitado@gnm.com';
+      const userId = user ? user.id : 'unknown';
 
       const initPoint = await GNM_API.mercadopago.createSubscription(
         { title: `Suscripción GNM - Plan ${tier}`, price: config.price },
-        { email: userEmail }
+        { email: userEmail },
+        { userId: userId, type: 'MEMBERSHIP', itemId: tier } // Metadatos para Webhook
       );
 
-      if (initPoint === '#mp_simulation_subscription_success' || initPoint === '#mp_simulation_success') {
+      if (initPoint === '#mp_simulation_subscription_success' || initPoint === '#mp_simulation_fallback') {
         alert('MODO PRUEBA: Simulando autorización de Débito Automático...');
         setIsProcessing(false);
         setShowSuccess(true);

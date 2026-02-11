@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Tour, User, BankSettings } from '../../types';
 import { TourCostBreakdown, formatARS } from '../../services/logic';
@@ -25,10 +24,12 @@ const TourPaymentModal: React.FC<TourPaymentModalProps> = ({ tour, breakdown, us
     setIsProcessing(true);
     try {
       const userEmail = user ? user.email : 'invitado@gnm.com';
+      const userId = user ? user.id : 'guest';
       
       const initPoint = await GNM_API.mercadopago.createPreference(
         { title: `Reserva: ${tour.destination}`, price: breakdown.finalTotal },
-        { email: userEmail }
+        { email: userEmail },
+        { userId: userId, type: 'TOUR', itemId: tour.id } // Metadatos para Webhook
       );
 
       if (initPoint.startsWith('#')) {
