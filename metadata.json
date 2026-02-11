@@ -1,0 +1,7 @@
+{
+  "name": "GNM TOUR",
+  "description": "Plataforma premium de tours grupales en Argentina y reserva de espacios (apartamentos y quinchos) con sistema de membresías y beneficios exclusivos.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
