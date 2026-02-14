@@ -1,4 +1,8 @@
 
+// NOTE: This file is currently unused as the application uses a custom backend (see services/api.ts).
+// The code is commented out to prevent build errors related to missing or incompatible firebase types.
+
+/*
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
@@ -21,3 +25,8 @@ const app = initializeApp(firebaseConfig);
 // Exportar servicios
 export const db = getFirestore(app);
 export const auth = getAuth(app);
+*/
+
+// Export placeholders
+export const db = {};
+export const auth = {};

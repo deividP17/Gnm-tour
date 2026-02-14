@@ -12,11 +12,33 @@ export type VerificationStatus = 'NONE' | 'PENDING' | 'VERIFIED' | 'REJECTED';
 
 export interface Notification {
   id: string;
-  type: 'BOOKING' | 'MEMBERSHIP' | 'VERIFICATION' | 'SYSTEM';
+  type: 'BOOKING' | 'MEMBERSHIP' | 'VERIFICATION' | 'SYSTEM' | 'SPACE_BOOKING' | 'CANCELLATION';
   title: string;
   message: string;
   timestamp: string;
   isRead: boolean;
+}
+
+export interface TravelHistoryItem {
+  id: string;
+  tourId: string;
+  destination: string;
+  date: string;
+  pax: number;
+  totalPaid: number;
+  km?: number; // Nuevo campo para saber cuántos km descontar al cancelar
+  status: 'COMPLETED' | 'CONFIRMED' | 'CANCELLED';
+  cancellationReason?: string;
+}
+
+export interface SpaceBooking {
+  id: string;
+  spaceId: string;
+  date: string;
+  userId: string;
+  userName: string;
+  status: 'CONFIRMED' | 'PENDING' | 'CANCELLED';
+  cancellationReason?: string;
 }
 
 export interface User {
@@ -30,14 +52,15 @@ export interface User {
   membership?: {
     tier: MembershipTier;
     validUntil: string;
-    usedThisMonth: number; // Kilómetros usados
+    usedThisMonth: number;
+    spaceBookingsThisMonth?: number; // Nuevo campo para controlar el límite de descuentos en espacios
+    cancellationReason?: string;
   };
-  tripsCount: number; // Cantidad de viajes realizados
+  tripsCount: number;
   credits: number;
   isVerified: boolean;
   lastConnection: string;
-  dniFront?: string;
-  dniBack?: string;
+  travelHistory?: TravelHistoryItem[];
   notifications?: Notification[];
 }
 
@@ -48,16 +71,19 @@ export interface BankSettings {
   cbu: string;
   alias: string;
   accountType: string;
-  mpPublicKey?: string;
-  mpAccessToken?: string; // Nuevo token privado para Checkout Pro
+  mpAccessToken?: string;
+  // Nuevos campos para links de suscripción automática
+  subscriptionLinks?: {
+    [key in MembershipTier]?: string;
+  };
 }
 
 export interface Tour {
   id: string;
   destination: string;
-  price: number; // Total price (calculated or sum)
-  priceTicket: number; // Costo del boleto (Aplica descuento)
-  priceLogistics: number; // Costo de logística (No aplica descuento)
+  price: number;
+  priceTicket: number;
+  priceLogistics: number;
   km: number;
   description: string;
   images: string[];
@@ -72,7 +98,6 @@ export interface Tour {
   minCapacity: number;
   status: 'OPEN' | 'CONFIRMED' | 'REPROGRAMMED' | 'CANCELLED';
   itinerary: string[];
-  upgrades?: Array<{ name: string; price: number }>;
 }
 
 export interface Space {
@@ -85,7 +110,7 @@ export interface Space {
   rules: string[];
   damageDeposit: number;
   cleaningFee: number;
-  availability: string[]; // Dates
+  availability: string[]; // Lista de fechas ocupadas (YYYY-MM-DD)
   images: string[];
 }
 
@@ -94,17 +119,5 @@ export interface SiteAsset {
   key: string;
   label: string;
   url: string;
-  category: 'HERO' | 'GALLERY' | 'BRAND';
-}
-
-export interface Booking {
-  id: string;
-  userId: string;
-  entityId: string;
-  entityType: 'TOUR' | 'SPACE';
-  totalPaid: number;
-  deposit: number;
-  status: 'PENDING' | 'CONFIRMED' | 'CANCELLED';
-  createdAt: string;
-  isMemberBenefitApplied: boolean;
+  category: 'HERO' | 'GALLERY' | 'BRAND' | 'PAGE_BANNER';
 }

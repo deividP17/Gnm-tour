@@ -10,9 +10,10 @@ interface LayoutProps {
   currentView: string;
   isEditMode: boolean;
   setIsEditMode: (val: boolean) => void;
+  onSaveChanges?: () => void;
 }
 
-const Layout: React.FC<LayoutProps> = ({ children, user, onNavigate, onLogout, currentView, isEditMode, setIsEditMode }) => {
+const Layout: React.FC<LayoutProps> = ({ children, user, onNavigate, onLogout, currentView, isEditMode, setIsEditMode, onSaveChanges }) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const navLinks = [
@@ -73,6 +74,15 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onNavigate, onLogout, c
           </div>
 
           <div className="flex items-center gap-4">
+            {isEditMode && user?.role === 'ADMIN' && (
+              <button 
+                onClick={onSaveChanges}
+                className="bg-orange-500 text-white px-6 py-2.5 text-xs font-black uppercase tracking-widest hover:bg-orange-600 transition-all shadow-lg animate-pulse"
+              >
+                <i className="fa-solid fa-floppy-disk mr-2"></i> Guardar Cambios
+              </button>
+            )}
+
             {!user ? (
               <button 
                 onClick={() => onNavigate('login')}
@@ -103,6 +113,9 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onNavigate, onLogout, c
         {/* MOBILE MENU */}
         {isMobileMenuOpen && (
           <div className="lg:hidden absolute top-full left-0 right-0 bg-white border-b border-slate-200 p-0 flex flex-col shadow-lg">
+            {isEditMode && (
+               <button onClick={onSaveChanges} className="w-full bg-orange-500 text-white p-6 font-black uppercase tracking-widest text-xs">Guardar Cambios Ahora</button>
+            )}
             {user?.role === 'ADMIN' && (
               <div className="flex flex-col gap-2 p-4 bg-slate-50 border-b border-slate-100">
                 <div className="flex justify-between items-center">

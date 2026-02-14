@@ -1,5 +1,5 @@
 
-import { Tour, User, MembershipTier } from '../types';
+import { Tour, User, MembershipTier, Space } from '../types';
 import { MEMBERSHIP_CONFIG } from '../constants';
 
 /**
@@ -95,6 +95,63 @@ export const calculateTourCostBreakdown = (tour: Tour, user: User | null): TourC
     reason
   };
 };
+
+export interface SpaceCostBreakdown {
+  originalPrice: number;
+  finalPrice: number;
+  discountAmount: number;
+  isDiscountApplied: boolean;
+  memberTier: MembershipTier;
+  decorationPerk: string | null;
+  remainingUses: number;
+}
+
+/**
+ * Lógica para precios de Espacios (Quincho/Depto)
+ * - Intermedio: 10% OFF (1 uso/mes)
+ * - Plus: 15% OFF (2 usos/mes) + Decoración Básica
+ * - Elite: 15% OFF (3 usos/mes) + Decoración Premium
+ */
+export const calculateSpaceCostBreakdown = (space: Space, user: User | null): SpaceCostBreakdown => {
+  const originalPrice = space.price;
+  let finalPrice = originalPrice;
+  let discountAmount = 0;
+  let isDiscountApplied = false;
+  let memberTier = MembershipTier.NONE;
+  let decorationPerk = null;
+  let remainingUses = 0;
+
+  if (user && user.membership && user.membership.tier !== MembershipTier.NONE) {
+    memberTier = user.membership.tier;
+    const config = MEMBERSHIP_CONFIG[memberTier];
+    const spaceConfig = config.spaceConfig || { discount: 0, limit: 0, decoration: null };
+
+    const usedCount = user.membership.spaceBookingsThisMonth || 0;
+    
+    // Check if within limit
+    if (usedCount < spaceConfig.limit) {
+      if (spaceConfig.discount > 0) {
+        discountAmount = originalPrice * spaceConfig.discount;
+        finalPrice = originalPrice - discountAmount;
+        isDiscountApplied = true;
+      }
+    }
+
+    remainingUses = Math.max(0, spaceConfig.limit - usedCount);
+    decorationPerk = spaceConfig.decoration;
+  }
+
+  return {
+    originalPrice,
+    finalPrice,
+    discountAmount,
+    isDiscountApplied,
+    memberTier,
+    decorationPerk,
+    remainingUses
+  };
+};
+
 
 /**
  * Checks if a cancellation is within the 48hs window

@@ -14,7 +14,23 @@ interface TourDetailProps {
 
 const TourDetail: React.FC<TourDetailProps> = ({ tour, user, onBack, onNavigateLogin, onBookTour }) => {
   const [showPayment, setShowPayment] = useState(false);
+  const [pax, setPax] = useState<number>(1);
+
+  // La fecha es FIJA y definida por el Administrador
+  const startDate = tour.dates.start;
   const breakdown = calculateTourCostBreakdown(tour, user);
+  
+  const durationDays = tour.itinerary.length > 0 ? tour.itinerary.length : 1;
+  
+  const getEndDate = (start: string) => {
+    if (!start) return '';
+    const date = new Date(start);
+    date.setDate(date.getDate() + (durationDays - 1));
+    return date.toISOString().split('T')[0];
+  };
+
+  const endDate = getEndDate(startDate);
+  const totalAmount = breakdown.finalTotal * pax;
 
   return (
     <div className="animate-in fade-in duration-300">
@@ -56,12 +72,12 @@ const TourDetail: React.FC<TourDetailProps> = ({ tour, user, onBack, onNavigateL
             </div>
             
             <div className="bg-black/30 backdrop-blur-md border border-white/10 p-6 text-white min-w-[280px] rounded-none">
-              <p className="text-[10px] font-bold uppercase tracking-widest opacity-60 mb-2">Salida Programada</p>
+              <p className="text-[10px] font-bold uppercase tracking-widest opacity-60 mb-2">Salida Confirmada</p>
               <div className="flex items-center gap-4">
-                 <div className="text-5xl font-black">{new Date(tour.dates.start).getDate()}</div>
+                 <div className="text-5xl font-black">{new Date(startDate).getDate()}</div>
                  <div className="flex flex-col leading-none">
-                    <span className="text-sm font-bold uppercase">{new Date(tour.dates.start).toLocaleString('es-ES', { month: 'long' })}</span>
-                    <span className="text-sm opacity-60">{new Date(tour.dates.start).getFullYear()}</span>
+                    <span className="text-sm font-bold uppercase">{new Date(startDate).toLocaleDateString('es-AR', {month: 'long'})}</span>
+                    <span className="text-sm opacity-60">{new Date(startDate).getFullYear()}</span>
                  </div>
               </div>
             </div>
@@ -72,11 +88,11 @@ const TourDetail: React.FC<TourDetailProps> = ({ tour, user, onBack, onNavigateL
       <div className="container mx-auto px-4 py-12 md:py-20">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
           
-          {/* LEFT COLUMN: ITINERARY & INFO */}
+          {/* ITINERARIO */}
           <div className="lg:col-span-7 space-y-12">
             <div>
               <h3 className="text-2xl font-black uppercase tracking-tight mb-8 text-slate-900 border-b border-slate-200 pb-4">
-                <i className="fa-solid fa-route text-blue-600 mr-3"></i> Itinerario
+                <i className="fa-solid fa-route text-blue-600 mr-3"></i> Itinerario del Viaje
               </h3>
               <div className="space-y-0 relative border-l border-slate-300 ml-2 pl-8 pb-4">
                 {tour.itinerary.map((item, index) => (
@@ -102,101 +118,77 @@ const TourDetail: React.FC<TourDetailProps> = ({ tour, user, onBack, onNavigateL
             </div>
           </div>
 
-          {/* RIGHT COLUMN: PRICING CARD */}
+          {/* TARJETA DE RESERVA */}
           <div className="lg:col-span-5">
             <div className="sticky top-28 bg-white border border-slate-200 p-8 shadow-sm rounded-none">
                
-               <h3 className="text-xl font-black uppercase tracking-tight mb-8 text-center border-b border-slate-100 pb-4">Desglose de Inversión</h3>
+               <h3 className="text-xl font-black uppercase tracking-tight mb-6 text-center border-b border-slate-100 pb-4">Detalles de Reserva</h3>
 
-               {/* GRAFICO VISUAL RECTANGULAR */}
-               <div className="flex h-6 w-full mb-8 bg-slate-100 rounded-none border border-slate-200">
-                  <div 
-                    className="bg-slate-400 relative group cursor-help transition-all duration-700 h-full"
-                    style={{ width: `${breakdown.logisticsPercentage}%` }}
-                  >
-                     <div className="absolute inset-0 flex items-center justify-center text-[9px] font-bold text-white uppercase overflow-hidden whitespace-nowrap">
-                       {Math.round(breakdown.logisticsPercentage)}% Logística
-                     </div>
+               <div className="space-y-6 mb-8">
+                  {/* Fecha Fija Visual */}
+                  <div className="bg-blue-50 border border-blue-100 p-6 flex flex-col justify-center items-center rounded-none text-center space-y-2">
+                      <p className="text-[10px] font-bold uppercase text-blue-500 tracking-widest">Fecha de Salida</p>
+                      <p className="text-2xl font-black text-blue-900 uppercase">
+                         {new Date(startDate).toLocaleDateString('es-AR', {dateStyle: 'full'})}
+                      </p>
+                      <p className="text-xs font-bold text-slate-400 uppercase">Regreso: {new Date(endDate).toLocaleDateString('es-AR', {day: 'numeric', month: 'short'})}</p>
                   </div>
-                  <div 
-                    className="bg-blue-600 relative group cursor-help transition-all duration-700 h-full"
-                    style={{ width: `${breakdown.ticketPercentage}%` }}
-                  >
-                     <div className="absolute inset-0 flex items-center justify-center text-[9px] font-bold text-white uppercase overflow-hidden whitespace-nowrap">
-                       {Math.round(breakdown.ticketPercentage)}% Boleto
+
+                  {/* Pasajeros */}
+                  <div className="space-y-2">
+                     <label className="text-[10px] font-bold uppercase text-slate-500 tracking-widest block">Pasajeros</label>
+                     <div className="flex border border-slate-200 rounded-none">
+                        <button 
+                           onClick={() => setPax(Math.max(1, pax - 1))}
+                           className="w-12 bg-slate-50 text-slate-600 hover:bg-slate-200 font-bold transition-colors"
+                        >-</button>
+                        <div className="flex-1 text-center py-3 font-black text-slate-900 bg-white">
+                           {pax} <span className="text-[10px] font-bold text-slate-400 uppercase ml-1">{pax === 1 ? 'Persona' : 'Personas'}</span>
+                        </div>
+                        <button 
+                           onClick={() => setPax(Math.min(tour.capacity, pax + 1))}
+                           className="w-12 bg-slate-50 text-slate-600 hover:bg-slate-200 font-bold transition-colors"
+                        >+</button>
                      </div>
+                     <p className="text-[9px] text-right font-bold text-slate-400 uppercase">Cupo Máximo: {tour.capacity}</p>
                   </div>
                </div>
 
-               <div className="space-y-4">
-                 {/* LOGISTICA */}
-                 <div className="flex justify-between items-center p-4 bg-slate-50 border border-slate-200 rounded-none">
-                    <div className="flex items-center gap-3">
-                       <div className="w-8 h-8 bg-slate-200 flex items-center justify-center text-slate-500 rounded-none"><i className="fa-solid fa-bed text-xs"></i></div>
-                       <div>
-                          <p className="text-[10px] font-bold uppercase text-slate-500">Logística</p>
-                          <p className="text-[10px] font-medium text-slate-400">Costo Fijo</p>
-                       </div>
-                    </div>
-                    <p className="text-base font-bold text-slate-700">{formatARS(breakdown.logisticsCost)}</p>
+               <div className="space-y-4 border-t border-slate-100 pt-6">
+                 <div className="flex justify-between items-center text-xs text-slate-500">
+                    <span className="font-bold uppercase">Precio por persona</span>
+                    <span className="font-bold">{formatARS(breakdown.finalTotal)}</span>
                  </div>
+                 
+                 {breakdown.isDiscountApplied && (
+                   <div className="flex justify-between items-center text-xs text-blue-600">
+                      <span className="font-bold uppercase flex items-center gap-1"><i className="fa-solid fa-tag"></i> Descuento Socio</span>
+                      <span className="font-bold">Aplicado</span>
+                   </div>
+                 )}
 
-                 {/* TICKET / BOLETO */}
-                 <div className={`flex justify-between items-center p-4 border rounded-none ${breakdown.isDiscountApplied ? 'bg-blue-50 border-blue-200' : 'bg-white border-slate-200'}`}>
-                    <div className="flex items-center gap-3">
-                       <div className="w-8 h-8 bg-blue-600 flex items-center justify-center text-white rounded-none"><i className="fa-solid fa-ticket text-xs"></i></div>
-                       <div>
-                          <p className="text-[10px] font-bold uppercase text-blue-700">Boleto GNM</p>
-                          <p className="text-[10px] font-medium text-slate-500">
-                            {breakdown.isDiscountApplied ? `Descuento Socio` : 'Sin beneficio'}
-                          </p>
-                       </div>
-                    </div>
-                    <div className="text-right">
-                       {breakdown.isDiscountApplied && (
-                         <span className="block text-[10px] font-bold text-slate-400 line-through">{formatARS(breakdown.serviceFee)}</span>
-                       )}
-                       <p className="text-base font-bold text-blue-600">{formatARS(breakdown.finalServiceFee)}</p>
-                    </div>
+                 <div className="flex justify-between items-end pt-4 border-t border-slate-200">
+                    <p className="text-xs font-bold uppercase text-slate-400">Total Final</p>
+                    <p className="text-4xl font-black text-slate-900 leading-none tracking-tight">
+                      {formatARS(totalAmount)}
+                    </p>
                  </div>
-               </div>
-               
-               {/* Notificación de razón del descuento */}
-               {breakdown.reason && (
-                 <div className="bg-slate-50 p-2 text-center text-[10px] font-bold uppercase text-slate-500 mt-4 border border-slate-100 rounded-none">
-                    {breakdown.reason}
-                 </div>
-               )}
-
-               <div className="my-8 border-t border-slate-200"></div>
-
-               <div className="flex justify-between items-end mb-8">
-                  <p className="text-xs font-bold uppercase text-slate-400">Total Final</p>
-                  <p className="text-4xl font-black text-slate-900 leading-none tracking-tight">
-                    {formatARS(breakdown.finalTotal)}
-                  </p>
                </div>
               
               {!user ? (
                 <button 
                   onClick={onNavigateLogin}
-                  className="w-full bg-slate-900 text-white py-4 font-bold text-xs uppercase tracking-widest hover:bg-slate-800 transition-colors rounded-none"
+                  className="mt-8 w-full bg-slate-900 text-white py-4 font-bold text-xs uppercase tracking-widest hover:bg-slate-800 transition-colors rounded-none"
                 >
                   Iniciar Sesión para Reservar
                 </button>
               ) : (
                 <button 
                   onClick={() => setShowPayment(true)}
-                  className="w-full bg-blue-600 text-white py-4 font-bold text-xs uppercase tracking-widest hover:bg-blue-700 transition-colors flex items-center justify-center gap-3 rounded-none"
+                  className="mt-8 w-full bg-blue-600 text-white py-4 font-bold text-xs uppercase tracking-widest hover:bg-blue-700 transition-colors flex items-center justify-center gap-3 rounded-none"
                 >
-                  <i className="fa-solid fa-credit-card"></i> Pagar / Reservar Ahora
+                  <i className="fa-solid fa-credit-card"></i> Reservar Ahora
                 </button>
-              )}
-              
-              {!breakdown.isDiscountApplied && user && (
-                 <p className="mt-4 text-[10px] text-center text-slate-400 font-medium uppercase">
-                   Si fueras socio con cupo disponible, pagarías menos en el boleto.
-                 </p>
               )}
             </div>
           </div>
@@ -209,6 +201,9 @@ const TourDetail: React.FC<TourDetailProps> = ({ tour, user, onBack, onNavigateL
           breakdown={breakdown} 
           user={user}
           onClose={() => setShowPayment(false)}
+          pax={pax}
+          startDate={startDate}
+          totalAmount={totalAmount}
           onSuccess={() => {
             onBookTour?.(tour);
             setShowPayment(false);

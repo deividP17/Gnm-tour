@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { User, MembershipTier } from '../types';
 import { GNM_API } from '../services/api';
+import { EmailService } from '../services/notificationService';
 
 interface AuthProps {
   onAuthSuccess: (user: User) => void;
@@ -18,10 +19,22 @@ const Auth: React.FC<AuthProps> = ({ onAuthSuccess, onCancel }) => {
   });
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [waitingVerification, setWaitingVerification] = useState(false); // Nuevo estado
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    
+    // Validaciones Básicas
+    if (!formData.email.includes('@')) {
+      setError('Formato de email inválido.');
+      return;
+    }
+    if (formData.password.length < 6) {
+      setError('La contraseña debe tener al menos 6 caracteres.');
+      return;
+    }
+
     setIsSubmitting(true);
 
     try {
@@ -30,21 +43,41 @@ const Auth: React.FC<AuthProps> = ({ onAuthSuccess, onCancel }) => {
         if (formData.password !== formData.confirmPassword) {
           throw new Error('Las contraseñas no coinciden.');
         }
-      }
+        
+        // REGISTRO
+        const user = await GNM_API.auth.register(formData.name, formData.email, formData.password);
+        
+        // Simular envío de email
+        EmailService.sendEmail(
+            user.email, 
+            "Confirma tu cuenta GNM TOUR", 
+            `Hola ${user.name}, haz click en el enlace para activar tu cuenta.`
+        );
 
-      let user: User;
-      if (isLogin) {
-        user = await GNM_API.auth.login(formData.email, formData.password);
+        setWaitingVerification(true); // Cambiar a vista de "Email Enviado"
+        setIsSubmitting(false);
+
       } else {
-        user = await GNM_API.auth.register(formData.name, formData.email, formData.password);
+        // LOGIN
+        const user = await GNM_API.auth.login(formData.email, formData.password);
+        onAuthSuccess(user);
       }
-      
-      onAuthSuccess(user);
     } catch (err: any) {
       setError(err.message || 'Error de autenticación.');
-    } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleSimulatedVerification = async () => {
+      setIsSubmitting(true);
+      try {
+          const user = await GNM_API.auth.verifyEmail(formData.email);
+          onAuthSuccess(user);
+      } catch (e) {
+          setError('Error al verificar.');
+      } finally {
+          setIsSubmitting(false);
+      }
   };
 
   const loginAsDemo = (role: 'ADMIN' | 'USER') => {
@@ -62,6 +95,36 @@ const Auth: React.FC<AuthProps> = ({ onAuthSuccess, onCancel }) => {
       handleSubmit(fakeEvent);
     }, 200);
   };
+
+  if (waitingVerification) {
+      return (
+        <div className="max-w-md mx-auto bg-white border border-slate-200 animate-in zoom-in duration-300 rounded-none shadow-lg p-10 text-center space-y-6">
+            <div className="w-20 h-20 bg-blue-100 text-blue-600 flex items-center justify-center text-3xl mx-auto rounded-full animate-pulse">
+               <i className="fa-regular fa-envelope"></i>
+            </div>
+            <h3 className="text-2xl font-black uppercase tracking-tight text-slate-900">Confirma tu Email</h3>
+            <p className="text-sm text-slate-600 font-medium leading-relaxed">
+                Hemos enviado un enlace de confirmación a <strong>{formData.email}</strong>. 
+                Por favor, revisa tu bandeja de entrada (y spam) para activar tu cuenta.
+            </p>
+            
+            <div className="bg-slate-50 p-4 border border-slate-200 mt-6">
+                <p className="text-[10px] font-bold uppercase text-slate-400 mb-2">Simulación de Entorno (Solo Demo)</p>
+                <button 
+                    onClick={handleSimulatedVerification}
+                    disabled={isSubmitting}
+                    className="text-blue-600 font-bold text-xs uppercase underline hover:text-blue-800"
+                >
+                    {isSubmitting ? 'Verificando...' : 'Hacer click aquí para simular confirmación'}
+                </button>
+            </div>
+            
+            <button onClick={() => setWaitingVerification(false)} className="text-slate-400 text-xs font-bold uppercase hover:text-slate-600 mt-4">
+                Volver
+            </button>
+        </div>
+      );
+  }
 
   return (
     <div className="max-w-md mx-auto bg-white border border-slate-200 animate-in fade-in duration-300 rounded-none shadow-lg">

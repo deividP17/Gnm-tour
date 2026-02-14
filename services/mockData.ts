@@ -14,7 +14,11 @@ export const MOCK_USERS: User[] = [
     tripsCount: 12,
     isVerified: true,
     lastConnection: 'Ahora mismo',
-    membership: { tier: MembershipTier.ELITE, validUntil: '2030-12-31', usedThisMonth: 0 }
+    membership: { tier: MembershipTier.ELITE, validUntil: '2030-12-31', usedThisMonth: 0, spaceBookingsThisMonth: 0 },
+    travelHistory: [
+      { id: 'th1', tourId: 't1', destination: 'Mendoza - Ruta del Vino', date: '2024-11-20', pax: 2, totalPaid: 150000, status: 'COMPLETED' },
+      { id: 'th2', tourId: 't2', destination: 'Cataratas del Iguazú', date: '2025-01-15', pax: 1, totalPaid: 120000, status: 'COMPLETED' }
+    ]
   },
   {
     id: 'u2',
@@ -28,7 +32,10 @@ export const MOCK_USERS: User[] = [
     tripsCount: 2,
     isVerified: true,
     lastConnection: 'Hace 2 horas',
-    membership: { tier: MembershipTier.BASICO, validUntil: '2026-05-10', usedThisMonth: 500 }
+    membership: { tier: MembershipTier.BASICO, validUntil: '2026-05-10', usedThisMonth: 500, spaceBookingsThisMonth: 0 },
+    travelHistory: [
+      { id: 'th3', tourId: 't1', destination: 'Mendoza - Ruta del Vino', date: '2024-12-05', pax: 1, totalPaid: 75000, status: 'COMPLETED' }
+    ]
   },
   {
     id: 'u3',
@@ -42,7 +49,7 @@ export const MOCK_USERS: User[] = [
     tripsCount: 0,
     isVerified: false,
     lastConnection: 'En línea',
-    membership: { tier: MembershipTier.PLUS, validUntil: '2026-04-01', usedThisMonth: 2800 }
+    membership: { tier: MembershipTier.PLUS, validUntil: '2026-04-01', usedThisMonth: 2800, spaceBookingsThisMonth: 0 }
   },
   {
     id: 'u4',

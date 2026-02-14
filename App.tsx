@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, MembershipTier, Tour, Space, SiteAsset } from './types';
+import { User, MembershipTier, Tour, Space, SiteAsset, TravelHistoryItem, Notification } from './types';
 import { MEMBERSHIP_CONFIG as INITIAL_MEMBERSHIP_CONFIG } from './constants';
 import { formatARS } from './services/logic';
 import { GNM_API } from './services/api';
@@ -13,6 +13,8 @@ import Auth from './components/Auth';
 import UserProfile from './components/Profile/UserProfile';
 import FloatingContact from './components/FloatingContact';
 import PaymentModal from './components/Payment/PaymentModal';
+import SpaceCard from './components/SpaceCard';
+import About from './components/About';
 
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<string>('home');
@@ -20,13 +22,32 @@ const App: React.FC = () => {
   const [tours, setTours] = useState<Tour[]>([]);
   const [spaces, setSpaces] = useState<Space[]>([]);
   const [assets, setAssets] = useState<SiteAsset[]>([]);
-  const [membershipConfigs, setMembershipConfigs] = useState<any>(INITIAL_MEMBERSHIP_CONFIG);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isEditMode, setIsEditMode] = useState<boolean>(false);
   const [emailToast, setEmailToast] = useState<{to: string, subject: string} | null>(null);
-  
   const [pendingTier, setPendingTier] = useState<MembershipTier | null>(null);
   const [selectedTour, setSelectedTour] = useState<Tour | null>(null);
+
+  const [membershipConfig, setMembershipConfig] = useState(INITIAL_MEMBERSHIP_CONFIG);
+  
+  // Estado del contenido del Home incluyendo el Collage
+  const [homeContent, setHomeContent] = useState({
+    heroSubtitle: 'Explora Argentina con GNM',
+    heroTitle: 'Tours Grupales & Espacios Premium',
+    collageTitle: 'Momentos Inolvidables',
+    collageImages: [
+      'https://images.unsplash.com/photo-1483729558449-99ef09a8c325?auto=format&fit=crop&q=80&w=800',
+      'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&q=80&w=800',
+      'https://images.unsplash.com/photo-1523906834658-6e24ef2386f9?auto=format&fit=crop&q=80&w=800',
+      'https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?auto=format&fit=crop&q=80&w=800'
+    ],
+    aboutContent: {
+      title: 'Pasión por Argentina',
+      story: 'GNM TOUR nace de la visión de Gerardo Ramón Lafuente para profesionalizar los viajes grupales y el alquiler de espacios de calidad en la provincia de Corrientes. Con años de experiencia en logística, ofrecemos un servicio que combina el confort premium con la calidez del trato personalizado.',
+      mission: 'Brindar experiencias de viaje seguras, exclusivas y memorables, optimizando el tiempo de nuestros socios a través de un sistema de membresías innovador.',
+      vision: 'Ser el operador turístico de referencia en el NEA, expandiendo nuestras rutas y espacios hacia los destinos más prestigiosos del país.'
+    }
+  });
 
   useEffect(() => {
     const initApp = async () => {
@@ -37,26 +58,11 @@ const App: React.FC = () => {
           GNM_API.spaces.getAll(),
           GNM_API.assets.getAll()
         ]);
-
-        const customTours = localStorage.getItem('gnm_custom_tours');
-        const customSpaces = localStorage.getItem('gnm_custom_spaces');
-        const customAssets = localStorage.getItem('gnm_custom_assets');
-        const customMemberships = localStorage.getItem('gnm_custom_memberships');
-
-        setTours(customTours && JSON.parse(customTours).length > 0 ? JSON.parse(customTours) : fetchedTours);
-        setSpaces(customSpaces && JSON.parse(customSpaces).length > 0 ? JSON.parse(customSpaces) : fetchedSpaces);
-        setAssets(customAssets && JSON.parse(customAssets).length > 0 ? JSON.parse(customAssets) : fetchedAssets);
-        
-        if (customMemberships) {
-          setMembershipConfigs(JSON.parse(customMemberships));
-        }
-
+        setTours(fetchedTours);
+        setSpaces(fetchedSpaces);
+        setAssets(fetchedAssets);
         const savedUser = localStorage.getItem('gnm_user');
-        if (savedUser) {
-          setUser(JSON.parse(savedUser));
-        }
-      } catch (error) {
-        console.error("Error cargando datos:", error);
+        if (savedUser) setUser(JSON.parse(savedUser));
       } finally {
         setIsLoading(false);
       }
@@ -71,606 +77,436 @@ const App: React.FC = () => {
     return () => window.removeEventListener('gnm-email-sent', handleEmailEvent);
   }, []);
 
-  useEffect(() => {
-    if (!isLoading) {
-      localStorage.setItem('gnm_custom_tours', JSON.stringify(tours));
-      localStorage.setItem('gnm_custom_spaces', JSON.stringify(spaces));
-      localStorage.setItem('gnm_custom_assets', JSON.stringify(assets));
-      localStorage.setItem('gnm_custom_memberships', JSON.stringify(membershipConfigs));
-    }
-  }, [tours, spaces, assets, membershipConfigs, isLoading]);
-
   const handleNavigate = (view: string) => {
     setCurrentView(view);
     setSelectedTour(null);
     window.scrollTo(0, 0);
   };
 
-  const getAssetValue = (key: string, defaultValue: string) => {
-    const found = assets.find(a => a.key === key);
-    return (found && found.url) ? found.url : defaultValue;
+  const handleLogout = () => {
+    setUser(null);
+    localStorage.removeItem('gnm_user');
+    setCurrentView('home');
   };
 
-  const handleUpdateAsset = (key: string, value: string) => {
-    const existing = assets.find(a => a.key === key);
-    if (existing) {
-      setAssets(assets.map(a => a.key === key ? { ...a, url: value } : a));
-    } else {
-      const newAsset: SiteAsset = {
-        id: `as-${Math.random().toString(36).substr(2, 9)}`,
-        key,
-        label: key,
-        url: value,
-        category: 'HERO'
-      };
-      setAssets([...assets, newAsset]);
+  const handleSaveChanges = async () => {
+    setIsLoading(true);
+    await new Promise(r => setTimeout(r, 1500));
+    setIsEditMode(false);
+    setIsLoading(false);
+    alert('¡Cambios guardados permanentemente en el servidor!');
+  };
+
+  const handleBookSpace = (spaceId: string, date: string, finalPrice: number) => {
+    const space = spaces.find(s => s.id === spaceId);
+    if (!space || !user) return;
+    
+    const updatedSpaces = spaces.map(s => s.id === spaceId ? { ...s, availability: [...(s.availability || []), date] } : s);
+    setSpaces(updatedSpaces);
+    
+    const notif = EmailService.createNotification(user, 'SPACE_BOOKING', `Reserva Confirmada: ${space.name}`, `Tu reserva para el día ${date} ha sido procesada exitosamente. Total abonado: ${formatARS(finalPrice)}`);
+    
+    // Incrementar contador de usos de espacio si tiene membresía
+    let updatedMembership = user.membership;
+    if (updatedMembership) {
+        updatedMembership = {
+            ...updatedMembership,
+            spaceBookingsThisMonth: (updatedMembership.spaceBookingsThisMonth || 0) + 1
+        };
     }
-  };
 
-  const handleUpdateMembershipConfig = (tier: string, updates: any) => {
-    setMembershipConfigs({
-      ...membershipConfigs,
-      [tier]: { ...membershipConfigs[tier], ...updates }
-    });
-  };
-
-  const handleAddTour = () => {
-    const newTour: Tour = {
-      id: `t-${Math.random().toString(36).substr(2, 9)}`,
-      destination: 'Nuevo Destino',
-      price: 0,
-      priceTicket: 0,
-      priceLogistics: 0,
-      km: 0,
-      description: 'Descripción del nuevo viaje',
-      images: ['https://images.unsplash.com/photo-1516496636080-14fb876e029d?auto=format&fit=crop&q=80&w=800'],
-      dates: { start: '', end: '', deadline: '', openAtMembers: '', openAtPublic: '' },
-      capacity: 20,
-      minCapacity: 10,
-      status: 'OPEN',
-      itinerary: []
-    };
-    setTours([...tours, newTour]);
-  };
-
-  const handleUpdateTour = (id: string, updates: Partial<Tour>) => {
-    setTours(tours.map(t => t.id === id ? { ...t, ...updates } : t));
-  };
-
-  const handleDeleteTour = (id: string) => {
-    setTours(tours.filter(t => t.id !== id));
+    const updatedUser = { ...user, membership: updatedMembership, notifications: [notif, ...(user.notifications || [])] };
+    handleUserUpdate(updatedUser);
+    handleNavigate('profile');
   };
 
   const handleUpdateSpace = (id: string, updates: Partial<Space>) => {
     setSpaces(spaces.map(s => s.id === id ? { ...s, ...updates } : s));
   };
 
-  const handleAuthSuccess = (userData: User) => {
-    setUser(userData);
-    localStorage.setItem('gnm_user', JSON.stringify(userData));
-    setCurrentView('home');
+  const handleUpdateTour = (id: string, updates: Partial<Tour>) => {
+    setTours(tours.map(t => t.id === id ? { ...t, ...updates } : t));
   };
 
-  const handleLogout = () => {
-    setUser(null);
-    setIsEditMode(false);
-    localStorage.removeItem('gnm_user');
-    setCurrentView('home');
+  const handleAddTour = (tour: Tour) => {
+    setTours([...tours, tour]);
   };
 
-  const handleUpdateUser = (updatedUser: User) => {
+  const handleDeleteTour = (id: string) => {
+    if (window.confirm("¿Seguro que deseas eliminar este viaje?")) {
+      setTours(tours.filter(t => t.id !== id));
+    }
+  };
+
+  const updateMembership = (tier: MembershipTier, key: string, value: any) => {
+    setMembershipConfig({
+        ...membershipConfig,
+        [tier]: { ...membershipConfig[tier], [key]: value }
+    });
+  };
+
+  const handleAddBenefit = (tier: MembershipTier) => {
+    const currentBenefits = [...membershipConfig[tier].benefits];
+    currentBenefits.push("Nuevo Beneficio...");
+    updateMembership(tier, 'benefits', currentBenefits);
+  };
+
+  const handleRemoveBenefit = (tier: MembershipTier, index: number) => {
+    const currentBenefits = [...membershipConfig[tier].benefits];
+    currentBenefits.splice(index, 1);
+    updateMembership(tier, 'benefits', currentBenefits);
+  };
+
+  const handleUserUpdate = (updatedUser: User) => {
     setUser(updatedUser);
     localStorage.setItem('gnm_user', JSON.stringify(updatedUser));
   };
 
-  const handleTourBooking = (tour: Tour) => {
+  // --- COLLAGE HANDLERS ---
+  const handleCollageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        if(ev.target?.result) {
+          setHomeContent(prev => ({
+            ...prev,
+            collageImages: [...prev.collageImages, ev.target!.result as string]
+          }));
+        }
+      };
+      reader.readAsDataURL(e.target.files[0]);
+    }
+  };
+
+  const handleRemoveCollageImage = (index: number) => {
+    setHomeContent(prev => ({
+      ...prev,
+      collageImages: prev.collageImages.filter((_, i) => i !== index)
+    }));
+  };
+  // ------------------------
+
+  const handleSubscribeClick = (tier: MembershipTier) => {
+      if (!user) {
+          alert("Debes crear una cuenta o iniciar sesión para suscribirte.");
+          setCurrentView('login');
+          return;
+      }
+      if (!user.isVerified) {
+          alert("Por favor verifica tu email antes de realizar pagos.");
+          return;
+      }
+      setPendingTier(tier);
+  };
+
+  const handleBookTour = (t: Tour) => {
     if (!user) return;
     
-    // Simular actualización de kilómetros y contador de viajes
-    const currentUsed = user.membership?.usedThisMonth || 0;
-    const currentTrips = user.tripsCount || 0;
-
-    const updatedUser: User = {
-      ...user,
-      tripsCount: currentTrips + 1,
-      membership: user.membership ? {
-        ...user.membership,
-        usedThisMonth: currentUsed + tour.km
-      } : undefined,
-      notifications: [
-        EmailService.createNotification(user, 'BOOKING', `Reserva Confirmada: ${tour.destination}`, `Has sumado ${tour.km} KM a tu historial.`),
-        ...(user.notifications || [])
-      ]
+    // 1. Crear el registro del viaje
+    const newTrip: TravelHistoryItem = {
+      id: `th-${Date.now()}`,
+      tourId: t.id,
+      destination: t.destination,
+      date: t.dates.start, // Fecha fija definida por admin
+      pax: 1, // Por ahora simple, idealmente vendría del modal
+      totalPaid: t.price,
+      status: 'CONFIRMED',
+      km: t.km // GUARDAMOS EL VALOR DE KM PARA FUTURAS CANCELACIONES
     };
 
-    handleUpdateUser(updatedUser);
-  };
-
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>, onComplete: (base64: string) => void) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onloadend = () => onComplete(reader.result as string);
-    reader.readAsDataURL(file);
-  };
-
-  const handlePaymentSuccess = (newTier: MembershipTier) => {
-    if (!user) return;
-    const updatedUser: User = {
-      ...user,
-      membership: { tier: newTier, validUntil: '2027-01-01', usedThisMonth: 0 },
-      notifications: [
-        EmailService.createNotification(user, 'MEMBERSHIP', `Plan ${newTier} Activado`, `Ya podés disfrutar de tus beneficios exclusivos.`),
-        ...(user.notifications || [])
-      ]
-    };
-    setUser(updatedUser);
-    localStorage.setItem('gnm_user', JSON.stringify(updatedUser));
-    setPendingTier(null);
-    setCurrentView('profile');
-  };
-
-  const EditableImage = ({ assetKey, className, defaultSrc, imgClassName = "" }: { assetKey: string, className: string, defaultSrc: string, imgClassName?: string }) => {
-    const src = getAssetValue(assetKey, defaultSrc);
-    return (
-      <div className={`relative group/img ${className}`}>
-        <img src={src} className={`w-full h-full object-cover ${imgClassName}`} alt="Banner GNM" />
-        {isEditMode && user?.role === 'ADMIN' && (
-          <label className="absolute inset-0 bg-blue-600/60 opacity-0 group-hover/img:opacity-100 flex flex-col items-center justify-center cursor-pointer transition-all z-20">
-            <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileChange(e, (url) => handleUpdateAsset(assetKey, url))} />
-            <i className="fa-solid fa-camera text-3xl text-white mb-2"></i>
-            <span className="bg-white text-blue-600 px-4 py-2 text-[10px] font-bold uppercase rounded-none">Cambiar Imagen</span>
-          </label>
-        )}
-      </div>
-    );
-  };
-
-  const EditableText = ({ assetKey, className = "", defaultText, multiline = false }: { assetKey: string, className?: string, defaultText: string, multiline?: boolean }) => {
-    const value = getAssetValue(assetKey, defaultText);
-    if (isEditMode && user?.role === 'ADMIN') {
-      return multiline ? (
-        <textarea 
-          className={`${className} bg-blue-50/20 border border-blue-500 outline-none w-full p-2 min-h-[100px] rounded-none`}
-          value={value}
-          onChange={(e) => handleUpdateAsset(assetKey, e.target.value)}
-        />
-      ) : (
-        <input 
-          className={`${className} bg-blue-50/20 border border-blue-500 outline-none px-2 rounded-none`}
-          value={value}
-          onChange={(e) => handleUpdateAsset(assetKey, e.target.value)}
-        />
-      );
+    // 2. Descontar KMs si aplica (Lógica de Membresía)
+    let updatedMembership = user.membership;
+    if (updatedMembership) {
+      // Sumar al acumulado del mes
+      updatedMembership = {
+        ...updatedMembership,
+        usedThisMonth: (updatedMembership.usedThisMonth || 0) + t.km
+      };
     }
-    return <span className={className}>{value || defaultText}</span>;
+
+    // 3. Notificación
+    const notif = EmailService.createNotification(user, 'BOOKING', `Viaje Confirmado: ${t.destination}`, `Te esperamos el ${t.dates.start}. Se han acumulado/descontado ${t.km} KM de tu membresía.`);
+
+    handleUserUpdate({
+      ...user,
+      travelHistory: [newTrip, ...(user.travelHistory || [])],
+      membership: updatedMembership,
+      notifications: [notif, ...(user.notifications || [])]
+    });
+
+    handleNavigate('profile');
   };
 
-  const renderHome = () => (
-    <div className="space-y-0">
-      
-      {/* Sección Hero Rediseñada - Sin Imagen de Fondo, Color Sólido */}
-      <section className="relative w-full h-[85vh] min-h-[600px] flex items-center justify-center overflow-hidden bg-slate-950">
-        
-        {/* Contenedor del Mensaje Central - Full Width sin Card */}
-        <div className="relative z-10 w-full container px-4 flex flex-col items-center text-center">
-          
-          <div className="w-full max-w-5xl mx-auto">
-            
-            <div className="inline-flex items-center gap-3 border border-blue-500/30 px-5 py-2 mb-8 bg-blue-900/20 rounded-none">
-              <i className="fa-solid fa-map-location-dot text-blue-400"></i>
-              <EditableText assetKey="hero_tag" defaultText="OPERADOR OFICIAL CORRIENTES" className="text-blue-200 text-[10px] font-bold uppercase tracking-[0.3em]" />
-            </div>
-            
-            <h1 className="flex flex-col items-center justify-center font-black text-white leading-none tracking-tight mb-8 w-full">
-              <span className="text-2xl sm:text-3xl md:text-4xl mb-3 font-bold text-slate-300 uppercase tracking-widest block">
-                <EditableText assetKey="hero_title_1" defaultText="Bienvenidos a" />
-              </span>
-              <span className="text-5xl sm:text-7xl md:text-8xl text-white block mt-2 drop-shadow-2xl">
-                <EditableText assetKey="hero_title_2" defaultText="GEMY TOURS" />
-              </span>
-            </h1>
-            
-            <div className="w-full max-w-xl mx-auto space-y-8">
-              <EditableText 
-                assetKey="hero_desc" 
-                defaultText="Experiencias exclusivas en Argentina. Comunicate conmigo y te cuento cómo viajar desde tu casa." 
-                className="text-lg text-slate-300 font-medium leading-relaxed block" 
-                multiline 
-              />
-              
-              <button 
-                onClick={() => window.open('https://wa.me/543794532196', '_blank')} 
-                className="inline-flex items-center justify-center gap-3 bg-blue-600 hover:bg-blue-700 text-white px-10 py-4 font-bold text-xs uppercase tracking-[0.2em] transition-all border border-blue-500 hover:border-blue-400 shadow-xl rounded-none"
-              >
-                <i className="fa-brands fa-whatsapp text-lg"></i> Contactar Ahora
-              </button>
-            </div>
-
-          </div>
+  return (
+    <Layout 
+      user={user} 
+      currentView={currentView} 
+      onNavigate={handleNavigate} 
+      onLogout={handleLogout} 
+      isEditMode={isEditMode} 
+      setIsEditMode={setIsEditMode}
+      onSaveChanges={handleSaveChanges}
+    >
+      {emailToast && (
+        <div className="fixed top-24 right-6 z-[250] bg-white border-l-4 border-blue-600 p-5 shadow-lg animate-in slide-in-from-right duration-500 rounded-none border border-slate-200">
+           <p className="text-[10px] font-bold uppercase tracking-widest text-blue-600">Email Enviado</p>
+           <p className="text-xs font-bold text-slate-800">{emailToast.subject}</p>
         </div>
-      </section>
+      )}
 
-      {/* Salon Section Modificada */}
-      <section className="container py-24 px-4">
-        {/* Fondo oscuro y bordes azules sutiles */}
-        <div className="bg-slate-950 text-white relative overflow-hidden shadow-2xl rounded-none border-y-4 border-blue-900/50">
-          <div className="relative z-10 grid grid-cols-1 lg:grid-cols-2 gap-0">
-            {/* Texto */}
-            <div className="p-12 md:p-20 space-y-8 flex flex-col justify-center order-2 lg:order-1">
-              <EditableText assetKey="salon_tag" defaultText="TU EVENTO EN CORRIENTES" className="text-blue-500 font-bold uppercase tracking-[0.3em] text-xs block" />
-              <h2 className="text-4xl sm:text-5xl font-black tracking-tight leading-tight">
-                <EditableText assetKey="salon_title" defaultText="Salón & Kids GNM" className="block" />
-                <span className="text-slate-500 font-medium block mt-2 text-2xl">
-                   <EditableText assetKey="salon_address" defaultText="Niño Jesús 1252" className="" />
-                </span>
-              </h2>
-              <EditableText assetKey="salon_desc" defaultText="El lugar perfecto para cumpleaños infantiles y fiestas sociales. Equipado para 60 personas." className="text-slate-400 text-lg font-normal leading-relaxed block" multiline />
-              <div>
-                <button onClick={() => setCurrentView('spaces')} className="w-full sm:w-auto bg-white text-slate-900 px-10 py-5 font-bold text-xs uppercase tracking-widest hover:bg-slate-200 transition-colors rounded-none">Ver Galería Real</button>
-              </div>
-            </div>
-            {/* Imagen con Padding y Marco */}
-            <div className="h-full min-h-[400px] p-6 lg:p-12 order-1 lg:order-2 bg-slate-900/50 flex items-center justify-center">
-               <div className="relative w-full h-full border border-blue-500/20 shadow-2xl">
-                  <EditableImage 
-                    assetKey="salon_main" 
-                    defaultSrc="https://images.unsplash.com/photo-1530103862676-de3c9a59af57?auto=format&fit=crop&q=80&w=1200" 
-                    className="w-full h-full" 
-                    imgClassName="object-cover" 
+      {currentView === 'home' && (
+        <div className="space-y-0 pb-24">
+          <section className="relative h-[85vh] flex items-center justify-center overflow-hidden bg-slate-900">
+             <img src={assets.find(a => a.key === 'home_hero')?.url} className="absolute inset-0 w-full h-full object-cover opacity-50" alt="Argentina" />
+             <div className="relative container text-center text-white space-y-8 px-4">
+                {isEditMode ? (
+                  <input 
+                    className="bg-blue-600/30 border-2 border-dashed border-blue-400 text-xs font-black uppercase tracking-[0.5em] text-blue-100 p-2 outline-none text-center mx-auto"
+                    value={homeContent.heroSubtitle}
+                    onChange={e => setHomeContent({...homeContent, heroSubtitle: e.target.value})}
                   />
-               </div>
-            </div>
-          </div>
-        </div>
-      </section>
-    </div>
-  );
-
-  const renderAbout = () => (
-    <div className="container py-20 px-4 space-y-20 animate-in fade-in duration-500">
-      
-      {/* Header Section */}
-      <div className="text-center max-w-4xl mx-auto space-y-6">
-        <h1 className="text-4xl md:text-6xl font-black uppercase tracking-tight text-slate-900">
-          <EditableText assetKey="about_title" defaultText="Nuestra Historia" />
-        </h1>
-        <p className="text-xl text-slate-500 font-medium leading-relaxed">
-          <EditableText assetKey="about_subtitle" defaultText="Conectando personas con la belleza de Argentina desde Corrientes." multiline />
-        </p>
-      </div>
-
-      {/* Story & Images */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
-        <div className="space-y-8 order-2 lg:order-1">
-          <div className="prose prose-lg text-slate-600 font-medium leading-loose">
-             <EditableText 
-               assetKey="about_text_1" 
-               defaultText="Todo comenzó con un sueño: acercar los paisajes más increíbles de nuestro país a la gente de Corrientes. GNM TOUR se fundó bajo la premisa de que viajar no es solo trasladarse, es vivir experiencias que transforman." 
-               multiline 
-               className="block mb-6"
-             />
-             <EditableText 
-               assetKey="about_text_2" 
-               defaultText="Con el tiempo, incorporamos nuestro propio salón de eventos, entendiendo que la celebración es otra forma de viaje. Hoy, somos una gran familia de viajeros y amigos que crece día a día." 
-               multiline 
-               className="block"
-             />
-          </div>
-          <div className="flex gap-4 pt-4">
-             <div className="bg-slate-100 p-4 border border-slate-200 text-center w-32 rounded-none">
-                <p className="text-3xl font-black text-blue-600"><EditableText assetKey="about_stat_1" defaultText="+10" /></p>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Años</p>
+                ) : (
+                  <p className="text-xs font-black uppercase tracking-[0.5em] text-blue-400">Explora Argentina con GNM</p>
+                )}
+                
+                {isEditMode ? (
+                  <textarea 
+                    className="bg-transparent border-2 border-dashed border-white/20 text-5xl md:text-8xl font-black uppercase tracking-tighter leading-none w-full text-center outline-none h-40"
+                    value={homeContent.heroTitle}
+                    onChange={e => setHomeContent({...homeContent, heroTitle: e.target.value})}
+                  />
+                ) : (
+                  <h1 className="text-5xl md:text-8xl font-black uppercase tracking-tighter leading-none">{homeContent.heroTitle}</h1>
+                )}
+                
+                <div className="flex flex-col sm:flex-row gap-4 justify-center pt-8">
+                   <button onClick={() => handleNavigate('tours')} className="bg-blue-600 px-10 py-5 text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition-all">Ver Catálogo</button>
+                   <button onClick={() => handleNavigate('spaces')} className="bg-white text-slate-900 px-10 py-5 text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all">Reservar Quincho</button>
+                </div>
              </div>
-             <div className="bg-slate-100 p-4 border border-slate-200 text-center w-32 rounded-none">
-                <p className="text-3xl font-black text-blue-600"><EditableText assetKey="about_stat_2" defaultText="+5k" /></p>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Viajeros</p>
-             </div>
-          </div>
-        </div>
+          </section>
 
-        <div className="order-1 lg:order-2 grid grid-cols-2 gap-4 h-[500px]">
-           <div className="space-y-4 pt-12">
-              <EditableImage 
-                assetKey="about_img_1" 
-                defaultSrc="https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=600" 
-                className="w-full h-[60%] shadow-xl" 
-                imgClassName="object-cover" 
-              />
-              <EditableImage 
-                assetKey="about_img_2" 
-                defaultSrc="https://images.unsplash.com/photo-1527631746610-bca00a040d60?auto=format&fit=crop&q=80&w=600" 
-                className="w-full h-[40%] shadow-xl opacity-80" 
-                imgClassName="object-cover" 
-              />
-           </div>
-           <div className="space-y-4 pb-12">
-              <EditableImage 
-                assetKey="about_img_3" 
-                defaultSrc="https://images.unsplash.com/photo-1488085061387-422e29b40080?auto=format&fit=crop&q=80&w=600" 
-                className="w-full h-[40%] shadow-xl opacity-80" 
-                imgClassName="object-cover" 
-              />
-              <EditableImage 
-                assetKey="about_img_4" 
-                defaultSrc="https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?auto=format&fit=crop&q=80&w=600" 
-                className="w-full h-[60%] shadow-xl" 
-                imgClassName="object-cover" 
-              />
-           </div>
-        </div>
-      </div>
-      
-      {/* Team/Admin Section Preview (Optional or generic image) */}
-       <div className="bg-slate-900 text-white p-12 md:p-20 relative overflow-hidden mt-20 border-y-4 border-blue-600">
-          <div className="relative z-10 text-center max-w-2xl mx-auto space-y-6">
-             <i className="fa-solid fa-quote-left text-4xl text-blue-500 opacity-50"></i>
-             <h2 className="text-2xl md:text-3xl font-black italic tracking-tight leading-relaxed">
-               <EditableText assetKey="about_quote" defaultText="Viajar es la única cosa que compras y te hace más rico. Gracias por elegirnos para ser parte de sus recuerdos." multiline />
-             </h2>
-             <div className="pt-6">
-               <p className="text-xs font-bold uppercase tracking-[0.3em] text-blue-400">Gerardo Ramón Lafuente</p>
-               <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mt-1">Fundador GNM TOUR</p>
-             </div>
-          </div>
-          <EditableImage 
-             assetKey="about_banner_bg" 
-             defaultSrc="https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&q=80&w=2000" 
-             className="absolute inset-0 opacity-10" 
-             imgClassName="object-cover" 
-          />
-       </div>
-    </div>
-  );
+          {/* NUEVA SECCIÓN: COLLAGE DE VIAJES */}
+          <section className="bg-white py-20 border-b border-slate-200">
+             <div className="container px-4">
+                <div className="text-center mb-12">
+                   {isEditMode ? (
+                     <input 
+                        className="text-4xl font-black uppercase italic leading-none text-center outline-none border-b-2 border-dashed border-blue-300 w-full max-w-xl mx-auto"
+                        value={homeContent.collageTitle}
+                        onChange={(e) => setHomeContent({...homeContent, collageTitle: e.target.value})}
+                     />
+                   ) : (
+                     <h2 className="text-4xl font-black uppercase italic leading-none">{homeContent.collageTitle}</h2>
+                   )}
+                   <div className="w-16 h-1 bg-blue-600 mx-auto mt-6"></div>
+                </div>
 
-  const renderTours = () => {
-    if (selectedTour) {
-      return (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                   {homeContent.collageImages.map((img, idx) => (
+                      <div key={idx} className={`relative group overflow-hidden aspect-[4/5] ${idx === 0 ? 'col-span-2 row-span-2' : ''}`}>
+                         <img src={img} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" alt="Travel Collage" />
+                         {isEditMode && (
+                            <button 
+                               onClick={() => handleRemoveCollageImage(idx)}
+                               className="absolute top-2 right-2 bg-red-600 text-white w-8 h-8 flex items-center justify-center hover:bg-red-700 z-10"
+                            >
+                               <i className="fa-solid fa-trash-can text-xs"></i>
+                            </button>
+                         )}
+                         <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-colors duration-300 pointer-events-none"></div>
+                      </div>
+                   ))}
+                   
+                   {isEditMode && (
+                      <label className="flex flex-col items-center justify-center bg-slate-50 border-2 border-dashed border-slate-300 aspect-[4/5] cursor-pointer hover:bg-blue-50 hover:border-blue-300 transition-colors">
+                         <i className="fa-solid fa-plus text-3xl text-slate-400 mb-2"></i>
+                         <span className="text-[10px] font-bold uppercase text-slate-500">Agregar Foto</span>
+                         <input type="file" className="hidden" accept="image/*" onChange={handleCollageUpload} />
+                      </label>
+                   )}
+                </div>
+             </div>
+          </section>
+
+          <section className="container px-4 py-20">
+             <div className="flex justify-between items-end mb-12">
+                <div>
+                   <h2 className="text-4xl font-black uppercase italic leading-none">Próximas Salidas</h2>
+                   <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-2">Nuestras experiencias más populares</p>
+                </div>
+                <button onClick={() => handleNavigate('tours')} className="text-[10px] font-black uppercase tracking-widest border-b-2 border-slate-900 pb-1">Ver Todo</button>
+             </div>
+             <TourList 
+              tours={tours.slice(0, 3)} 
+              user={user} 
+              onSelect={(t) => { setSelectedTour(t); setCurrentView('tour_detail'); }} 
+              isEditMode={isEditMode} 
+              onUpdateTour={handleUpdateTour} 
+              onAddTour={handleAddTour}
+              onDeleteTour={handleDeleteTour}
+            />
+          </section>
+        </div>
+      )}
+
+      {currentView === 'about' && (
+        <About 
+          isEditMode={isEditMode} 
+          content={homeContent.aboutContent} 
+          onUpdate={(upd) => setHomeContent({...homeContent, aboutContent: {...homeContent.aboutContent, ...upd}})} 
+        />
+      )}
+
+      {currentView === 'tour_detail' && selectedTour && (
         <TourDetail 
           tour={selectedTour} 
           user={user} 
-          onBack={() => { setSelectedTour(null); window.scrollTo(0, 0); }}
-          onNavigateLogin={() => handleNavigate('login')}
-          onBookTour={handleTourBooking}
+          onBack={() => handleNavigate('tours')} 
+          onNavigateLogin={() => handleNavigate('login')} 
+          onBookTour={handleBookTour} 
         />
-      );
-    }
-    
-    return (
-      <div className="container py-12 px-4 space-y-12">
-        <div className="mb-16 border-b border-slate-200 pb-8">
-          <h1 className="text-4xl font-black uppercase tracking-tight text-slate-900 mb-2">Nuestros Destinos</h1>
-          <p className="text-slate-500 text-lg">Explora Argentina con la garantía de Gerardo Ramón.</p>
-        </div>
-        <TourList 
-          tours={tours} 
-          user={user} 
-          onSelect={(t) => { setSelectedTour(t); window.scrollTo(0, 0); }} 
-          isEditMode={isEditMode} 
-          onUpdateTour={handleUpdateTour} 
-          onAddTour={handleAddTour}
-          onDeleteTour={handleDeleteTour}
-        />
-      </div>
-    );
-  };
+      )}
 
-  const renderSpaces = () => (
-    <div className="container py-12 px-4 space-y-16">
-      <div className="border-b border-slate-200 pb-8">
-        <h1 className="text-4xl font-black uppercase tracking-tight text-slate-900">Salón & Quincho</h1>
-        <p className="text-slate-500 mt-2 text-lg">Ubicación exclusiva: Pasaje Niño Jesús 1252, Corrientes.</p>
-      </div>
-      {spaces.map(space => (
-        <div key={space.id} className="bg-white border border-slate-200 shadow-sm relative rounded-none">
-          {isEditMode && user?.role === 'ADMIN' && (
-            <button 
-              onClick={() => setSpaces(spaces.filter(s => s.id !== space.id))}
-              className="absolute top-4 right-4 z-30 w-10 h-10 bg-red-600 text-white flex items-center justify-center hover:bg-red-700 rounded-none"
-              title="Eliminar Espacio"
-            >
-              <i className="fa-solid fa-trash-can"></i>
-            </button>
-          )}
-          <div className="grid grid-cols-1 lg:grid-cols-2">
-            <div className="relative h-[400px] lg:h-full group/spimg">
-              <img src={space.images[0]} className="w-full h-full object-cover" alt={space.name} />
-              {isEditMode && user?.role === 'ADMIN' && (
-                <label className="absolute inset-0 bg-blue-600/60 opacity-0 group-hover/spimg:opacity-100 flex flex-col items-center justify-center cursor-pointer transition-all z-20">
-                  <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileChange(e, (url) => handleUpdateSpace(space.id, { images: [url] }))} />
-                  <i className="fa-solid fa-camera text-3xl text-white mb-2"></i>
-                  <span className="bg-white text-blue-600 px-4 py-2 text-[10px] font-bold uppercase rounded-none">Cambiar Foto Espacio</span>
-                </label>
-              )}
-            </div>
-            <div className="p-10 md:p-16 space-y-8 flex flex-col justify-center">
-              {isEditMode ? (
-                <input className="text-3xl font-black uppercase block w-full bg-slate-50 border border-slate-300 p-2 rounded-none" value={space.name} onChange={e => handleUpdateSpace(space.id, { name: e.target.value })} />
-              ) : <h3 className="text-3xl font-black uppercase tracking-tight">{space.name}</h3>}
-              
-              {isEditMode ? (
-                <textarea className="text-slate-500 font-medium block leading-relaxed w-full bg-slate-50 border border-slate-300 p-2 min-h-[100px] rounded-none" value={space.description} onChange={e => handleUpdateSpace(space.id, { description: e.target.value })} />
-              ) : <p className="text-slate-500 font-medium leading-relaxed">{space.description}</p>}
-              
-              <div className="border border-slate-200 p-6 bg-slate-50 rounded-none">
-                <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Reserva Base</p>
-                {isEditMode ? (
-                  <input type="number" className="bg-transparent font-black text-2xl w-full outline-none text-blue-600" value={space.price} onChange={e => handleUpdateSpace(space.id, { price: Number(e.target.value) })} />
-                ) : <p className="text-3xl font-black text-slate-900">{formatARS(space.price)}</p>}
-              </div>
-              
-              <button onClick={() => window.open(`https://wa.me/543794532196`, '_blank')} className="w-full bg-slate-900 text-white py-5 font-bold text-xs uppercase tracking-widest hover:bg-blue-600 transition-colors rounded-none">Consultar Fecha</button>
-            </div>
-          </div>
-        </div>
-      ))}
-      
-      {/* ADD SPACE BUTTON */}
-      {isEditMode && user?.role === 'ADMIN' && (
-        <div className="text-center pt-8">
-          <button 
-            onClick={() => {
-              const newSpace: Space = {
-                id: `s-${Math.random().toString(36).substr(2, 9)}`,
-                name: 'Nuevo Espacio',
-                type: 'QUINCHO',
-                price: 0,
-                capacity: 0,
-                description: 'Descripción del nuevo espacio',
-                rules: [],
-                damageDeposit: 0,
-                cleaningFee: 0,
-                availability: [],
-                images: ['https://images.unsplash.com/photo-1543823441-29651f0746aa?auto=format&fit=crop&q=80&w=1200']
-              };
-              setSpaces([...spaces, newSpace]);
-            }}
-            className="w-full sm:w-auto bg-white border border-blue-600 text-blue-600 px-10 py-5 font-bold text-xs uppercase tracking-widest hover:bg-blue-50 transition-colors rounded-none"
-          >
-            + Agregar Nuevo Espacio
-          </button>
+      {currentView === 'tours' && (
+        <div className="container py-12 px-4">
+          <h2 className="text-4xl font-black uppercase italic mb-12">Catálogo de Viajes</h2>
+          <TourList 
+            tours={tours} 
+            user={user} 
+            onSelect={(t) => { setSelectedTour(t); setCurrentView('tour_detail'); }} 
+            isEditMode={isEditMode} 
+            onUpdateTour={handleUpdateTour} 
+            onAddTour={handleAddTour} 
+            onDeleteTour={handleDeleteTour} 
+          />
         </div>
       )}
-    </div>
-  );
 
-  const renderMemberships = () => (
-    <div className="container py-20 px-4 space-y-16">
-      <div className="text-center max-w-3xl mx-auto space-y-4">
-        <h2 className="text-4xl font-black uppercase tracking-tight">
-          <EditableText assetKey="mem_title" defaultText="Club de Socios GNM" className="" />
-        </h2>
-        <p className="text-slate-500 text-lg">
-          <EditableText assetKey="mem_desc" defaultText="Unite a nuestra comunidad y accedé a descuentos masivos en cada tour por Argentina y beneficios exclusivos en el salón de Niño Jesús." className="" multiline />
-        </p>
-      </div>
-      <div className="row g-0 border border-slate-200">
-        {Object.entries(membershipConfigs).map(([tier, config]: [any, any], index) => {
-          const isCurrent = user?.membership?.tier === tier;
-          return (
-            <div key={tier} className="col-12 col-md-6 col-lg-3">
-              <div className={`h-full p-8 md:p-10 border-b md:border-b-0 md:border-r border-slate-200 flex flex-col ${
-                tier === 'ELITE' ? 'bg-slate-900 text-white' : 'bg-white text-slate-900'
-              }`}>
-                <span className={`text-[10px] font-bold uppercase tracking-widest mb-6 inline-block ${tier === 'ELITE' ? 'text-blue-400' : 'text-slate-400'}`}>{tier}</span>
-                <div className="mb-8">
-                  {isEditMode ? (
-                    <div className="flex flex-col gap-1">
-                      <p className="text-[9px] font-bold uppercase opacity-40">Precio ARS</p>
-                      <input 
-                        type="number" 
-                        className="text-2xl font-black bg-transparent border-b border-slate-300 w-full rounded-none" 
-                        value={config.price} 
-                        onChange={e => handleUpdateMembershipConfig(tier, { price: Number(e.target.value) })} 
-                      />
-                    </div>
-                  ) : (
-                    <>
-                      <p className="text-4xl font-black tracking-tight">{formatARS(config.price)}</p>
-                      <p className="text-[10px] font-bold uppercase opacity-40 mt-1">Suscripción Mensual</p>
-                    </>
-                  )}
+      {currentView === 'login' && (
+        <div className="py-12">
+          <Auth onAuthSuccess={(u) => { setUser(u); localStorage.setItem('gnm_user', JSON.stringify(u)); setCurrentView('home'); }} onCancel={() => handleNavigate('home')} />
+        </div>
+      )}
+      
+      {currentView === 'profile' && user && (
+        <UserProfile user={user} tours={tours} onNavigate={handleNavigate} onLogout={handleLogout} onUpdateUser={handleUserUpdate} />
+      )}
+
+      {currentView === 'spaces' && (
+        <div className="container py-12 px-4 space-y-16">
+           <div className="max-w-2xl">
+              <h2 className="text-4xl font-black uppercase italic leading-none">Alquiler de Espacios</h2>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-4">Disfrutá del Salón & Quincho GNM en Pasaje Niño Jesús 1252. Seleccioná tu fecha y reservá al instante.</p>
+           </div>
+           {spaces.map(space => (
+            <SpaceCard 
+              key={space.id} 
+              space={space} 
+              user={user} 
+              isEditMode={isEditMode} 
+              onUpdate={handleUpdateSpace} 
+              onDelete={() => {}} 
+              onBookSpace={handleBookSpace} 
+            />
+           ))}
+        </div>
+      )}
+
+      {currentView === 'memberships' && (
+        <div className="container py-12 px-4">
+           <h2 className="text-4xl font-black uppercase italic mb-12 text-center">Membresías GNM</h2>
+           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {Object.entries(membershipConfig).map(([tier, config]: [any, any]) => (
+                <div key={tier} className="bg-white border border-slate-200 p-8 flex flex-col justify-between space-y-8 hover:border-blue-600 transition-colors">
+                   <div className="space-y-4">
+                      <p className="text-[10px] font-black uppercase tracking-[0.3em] text-blue-600">Plan Mensual</p>
+                      <h3 className="text-3xl font-black uppercase">{tier}</h3>
+                      {isEditMode ? (
+                        <div className="flex items-center gap-2 bg-slate-50 border border-dashed border-slate-300 p-2">
+                           <span className="text-xs font-bold">$</span>
+                           <input 
+                              type="number" 
+                              className="w-full bg-transparent font-black text-2xl outline-none"
+                              value={config.price}
+                              onChange={e => updateMembership(tier, 'price', Number(e.target.value))}
+                           />
+                        </div>
+                      ) : (
+                        <p className="text-4xl font-black">{formatARS(config.price)}</p>
+                      )}
+                      <ul className="space-y-3 pt-6 border-t border-slate-100">
+                         {config.benefits.map((b: string, i: number) => (
+                           <li key={i} className="text-[10px] font-bold uppercase text-slate-500 flex items-center gap-2">
+                             <i className="fa-solid fa-check text-blue-600"></i>
+                             {isEditMode ? (
+                               <div className="flex items-center gap-2 w-full">
+                                   <input 
+                                      className="w-full bg-transparent border-b border-dashed border-slate-200 outline-none text-[9px]"
+                                      value={b}
+                                      onChange={e => {
+                                        const newB = [...config.benefits];
+                                        newB[i] = e.target.value;
+                                        updateMembership(tier, 'benefits', newB);
+                                      }}
+                                   />
+                                   <button 
+                                      onClick={() => handleRemoveBenefit(tier as MembershipTier, i)}
+                                      className="text-red-500 hover:text-red-700 p-1"
+                                      title="Eliminar beneficio"
+                                   >
+                                      <i className="fa-solid fa-trash-can"></i>
+                                   </button>
+                               </div>
+                             ) : b}
+                           </li>
+                         ))}
+                      </ul>
+                      {isEditMode && (
+                        <button 
+                          onClick={() => handleAddBenefit(tier as MembershipTier)}
+                          className="w-full py-2 text-[9px] font-bold uppercase tracking-widest text-blue-600 border border-dashed border-blue-300 hover:bg-blue-50 mt-2"
+                        >
+                          + Agregar Beneficio
+                        </button>
+                      )}
+                   </div>
+                   <button 
+                     onClick={() => handleSubscribeClick(tier as MembershipTier)} 
+                     className="w-full bg-slate-900 text-white py-4 text-[10px] font-black uppercase tracking-widest hover:bg-blue-600 transition-colors"
+                   >
+                     Suscribirme
+                   </button>
                 </div>
-                
-                <div className="space-y-4 mb-10 flex-1">
-                  <p className={`text-[10px] font-bold uppercase tracking-widest mb-2 ${tier === 'ELITE' ? 'text-slate-400' : 'text-blue-600'}`}>Beneficios</p>
-                  <ul className="space-y-3">
-                    {config.benefits.map((b: string, i: number) => (
-                      <li key={i} className="flex gap-3 text-xs font-medium items-start">
-                        <i className={`fa-solid fa-square-check mt-0.5 ${tier === 'ELITE' ? 'text-blue-400' : 'text-slate-800'}`}></i> 
-                        {isEditMode ? (
-                          <div className="flex-1 flex gap-2 items-center">
-                            <input 
-                              className="bg-transparent border border-slate-300 px-2 py-1 w-full text-[10px] rounded-none" 
-                              value={b} 
-                              onChange={e => {
-                                const newBenefits = [...config.benefits];
-                                newBenefits[i] = e.target.value;
-                                handleUpdateMembershipConfig(tier, { benefits: newBenefits });
-                              }}
-                            />
-                            <button 
-                              onClick={() => {
-                                const newBenefits = config.benefits.filter((_: any, idx: number) => idx !== i);
-                                handleUpdateMembershipConfig(tier, { benefits: newBenefits });
-                              }}
-                              className="text-red-500"
-                            >
-                              <i className="fa-solid fa-trash-can"></i>
-                            </button>
-                          </div>
-                        ) : b}
-                      </li>
-                    ))}
-                  </ul>
-                  {isEditMode && (
-                    <button 
-                      onClick={() => {
-                        handleUpdateMembershipConfig(tier, { benefits: [...config.benefits, "Nuevo beneficio"] });
-                      }}
-                      className="mt-4 w-full py-2 border border-dashed border-slate-400 text-[9px] font-bold uppercase hover:bg-slate-100 transition-colors rounded-none"
-                    >
-                      + Agregar Beneficio
-                    </button>
-                  )}
-                </div>
-
-                {!isEditMode && (
-                  <button 
-                    onClick={() => {
-                      if (!user) { handleNavigate('login'); return; }
-                      setPendingTier(tier as MembershipTier);
-                    }}
-                    disabled={isCurrent}
-                    className={`w-full py-4 font-bold text-[10px] uppercase tracking-widest transition-colors rounded-none ${
-                      isCurrent 
-                        ? 'bg-green-100 text-green-800 cursor-default' 
-                        : tier === 'ELITE' ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-slate-900 text-white hover:bg-slate-800'
-                    }`}
-                  >
-                    {isCurrent ? 'Plan Actual' : 'Suscribirme'}
-                  </button>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-
-  return (
-    <Layout user={user} currentView={currentView} onNavigate={handleNavigate} onLogout={handleLogout} isEditMode={isEditMode} setIsEditMode={setIsEditMode}>
-      {emailToast && (
-        <div className="fixed top-24 right-6 z-[250] bg-white border border-l-4 border-l-blue-600 border-slate-200 p-5 shadow-lg flex items-center gap-4 animate-in slide-in-from-right duration-500 rounded-none">
-           <div>
-              <p className="text-[10px] font-bold uppercase tracking-widest text-blue-600 mb-1">Notificación</p>
-              <p className="text-xs font-bold text-slate-800">{emailToast.subject}</p>
+              ))}
            </div>
         </div>
       )}
 
-      {currentView === 'home' && renderHome()}
-      {currentView === 'login' && <Auth onAuthSuccess={handleAuthSuccess} onCancel={() => handleNavigate('home')} />}
-      {currentView === 'profile' && user && <UserProfile user={user} onNavigate={handleNavigate} onLogout={handleLogout} onUpdateUser={handleUpdateUser} />}
-      {currentView === 'about' && renderAbout()}
-      {currentView === 'tours' && renderTours()}
-      {currentView === 'spaces' && renderSpaces()}
-      {currentView === 'memberships' && renderMemberships()}
       {currentView === 'admin' && user?.role === 'ADMIN' && (
-        <div className="container px-4 md:px-0">
-          <AdminDashboard 
-            tours={tours} 
-            spaces={spaces} 
-            onAddTour={(t) => setTours([...tours, t])}
-            onDeleteTour={handleDeleteTour}
-          />
-        </div>
+        <AdminDashboard tours={tours} spaces={spaces} onAddTour={() => {}} onDeleteTour={() => {}} onUpdateSpace={handleUpdateSpace} />
       )}
-      
-      {pendingTier && (
-        <PaymentModal tier={pendingTier} onSuccess={handlePaymentSuccess} onCancel={() => setPendingTier(null)} />
-      )}
+
+      {pendingTier && <PaymentModal tier={pendingTier} onSuccess={(t, months) => { 
+        if(user) {
+          // Calcular nueva fecha de vencimiento
+          const now = new Date();
+          now.setMonth(now.getMonth() + months);
+          const validUntil = now.toISOString().split('T')[0];
+
+          const updated = { 
+            ...user, 
+            membership: { 
+              tier: t, 
+              validUntil: validUntil, 
+              usedThisMonth: 0 
+            } 
+          };
+          handleUserUpdate(updated);
+        }
+        setPendingTier(null); 
+        handleNavigate('profile');
+      }} onCancel={() => setPendingTier(null)} />}
       
       <FloatingContact />
     </Layout>
