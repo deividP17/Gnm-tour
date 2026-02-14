@@ -1,10 +1,7 @@
 
-import React, { useState } from 'react';
-import LegalAgent from './LegalAgent';
+import React from 'react';
 
 const FloatingContact: React.FC = () => {
-  const [showLegal, setShowLegal] = useState(false);
-
   const handleWhatsApp = () => {
     const message = encodeURIComponent("Hola Gerardo! Consulta desde GNM TOUR.");
     window.open(`https://wa.me/543794532196?text=${message}`, '_blank');
@@ -21,24 +18,6 @@ const FloatingContact: React.FC = () => {
           <i className="fa-brands fa-whatsapp"></i>
         </button>
       </div>
-
-      <div className="relative group">
-        <button 
-          onClick={() => setShowLegal(!showLegal)}
-          className={`w-14 h-14 flex items-center justify-center text-xl transition-colors rounded-none shadow-lg border border-slate-200 ${
-            showLegal ? 'bg-slate-900 text-white' : 'bg-white text-blue-600 hover:bg-slate-100'
-          }`}
-          title="Legal"
-        >
-          <i className={`fa-solid ${showLegal ? 'fa-xmark' : 'fa-scale-balanced'}`}></i>
-        </button>
-      </div>
-
-      {showLegal && (
-        <div className="absolute bottom-20 right-0 animate-in fade-in duration-200">
-           <LegalAgent isEmbedded={true} onClose={() => setShowLegal(false)} />
-        </div>
-      )}
     </div>
   );
 };

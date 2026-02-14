@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Space, User } from '../types';
-import { formatARS, calculateSpaceCostBreakdown } from '../services/logic';
+import { formatARS, calculateSpaceCostBreakdown, toLocalISOString, getLocalDateFromISO } from '../services/logic';
 import SpacePaymentModal from './Payment/SpacePaymentModal';
 
 interface SpaceCardProps {
@@ -51,7 +51,7 @@ const SpaceCard: React.FC<SpaceCardProps> = ({ space, user, isEditMode, onUpdate
 
   const handleDateClick = (date: Date) => {
     if (date < today) return;
-    const dateStr = date.toISOString().split('T')[0];
+    const dateStr = toLocalISOString(date); // USO DE HELPER LOCAL
     if (space.availability?.includes(dateStr)) return;
     setSelectedDate(dateStr);
   };
@@ -267,7 +267,7 @@ const SpaceCard: React.FC<SpaceCardProps> = ({ space, user, isEditMode, onUpdate
                 ))}
 
                 {days.map((date, i) => {
-                  const dateStr = date.toISOString().split('T')[0];
+                  const dateStr = toLocalISOString(date); // USO DE HELPER LOCAL
                   const isOccupied = space.availability?.includes(dateStr);
                   const isPast = date < today;
                   const isToday = date.toDateString() === today.toDateString();
@@ -326,7 +326,8 @@ const SpaceCard: React.FC<SpaceCardProps> = ({ space, user, isEditMode, onUpdate
              </div>
              <button disabled={!selectedDate} onClick={() => setShowPayment(true)}
                className="w-full sm:w-auto bg-slate-900 text-white px-12 py-6 text-[10px] font-black uppercase tracking-[0.2em] hover:bg-blue-600 transition-all disabled:bg-slate-100 disabled:text-slate-300 shadow-2xl shadow-slate-200 active:scale-95">
-               {selectedDate ? `Reservar ${new Date(selectedDate).toLocaleDateString()}` : 'Selecciona un día'}
+               {/* USO DE HELPER LOCAL PARA VISUALIZACIÓN EN BOTÓN */}
+               {selectedDate ? `Reservar ${getLocalDateFromISO(selectedDate).toLocaleDateString('es-AR')}` : 'Selecciona un día'}
              </button>
           </div>
         </div>

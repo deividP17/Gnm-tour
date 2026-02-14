@@ -2,23 +2,20 @@
 import { Tour, Space, User, SiteAsset, MembershipTier, BankSettings } from '../types';
 import { MOCK_TOURS, MOCK_SPACES, MOCK_USERS, MOCK_ASSETS } from './mockData';
 import { BANK_DETAILS } from '../constants';
+import { SecurityService } from './security';
 
 const IS_LOCAL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
 const IS_NGROK = window.location.hostname.includes('ngrok-free.app');
 
-// CAMBIA "https://tudominio.com" POR TU URL REAL DE HOSTINGER (sin barra al final)
+// URL DE PRODUCCIÓN (HOSTINGER)
+// Al estar vacío o ser relativo, intentará buscar en el mismo dominio.
+// Si no hay backend, el safeFetch activará los Mocks.
 const PROD_URL = 'https://gnmtour.com'; 
-
-// Opcional: Si quieres forzar una URL específica de Ngrok mientras desarrollas en localhost
-const MANUAL_NGROK_URL = ""; 
 
 // Lógica de Selección de API
 let API_URL = '';
 if (IS_NGROK) {
-    // Si estamos visitando la web desde ngrok, la API está en el mismo dominio
     API_URL = '/api'; 
-} else if (MANUAL_NGROK_URL) {
-    API_URL = `${MANUAL_NGROK_URL}/api`;
 } else if (IS_LOCAL) {
     API_URL = 'http://localhost:3001/api';
 } else {
@@ -32,21 +29,32 @@ const getHeaders = () => {
   return {
     'Content-Type': 'application/json',
     'Authorization': token ? `Bearer ${token}` : '',
-    'ngrok-skip-browser-warning': 'true' // Vital para que ngrok no bloquee las peticiones
+    'ngrok-skip-browser-warning': 'true'
   };
 };
 
 const safeFetch = async (url: string, options: any = {}) => {
-  // Inyectar headers por defecto para manejar Ngrok y Auth
   const defaultHeaders = getHeaders();
   options.headers = { ...defaultHeaders, ...options.headers };
 
   try {
     const res = await fetch(url, options);
+    
+    // VALIDACIÓN CRÍTICA PARA HOSTINGER:
+    // Si la respuesta no es OK (ej: 404, 500) devolvemos null para usar Mocks.
     if (!res.ok) return null;
+    
+    // Si la respuesta devuelve HTML en lugar de JSON (común en Hostinger si la ruta no existe),
+    // devolvemos null para evitar errores de parseo y usar Mocks.
+    const contentType = res.headers.get("content-type");
+    if (!contentType || !contentType.includes("application/json")) {
+        return null; 
+    }
+
     return await res.json();
   } catch (e) {
-    console.warn(`API Error: ${url} not available. Using mocks.`);
+    // Si falla la red (sin conexión o CORS), usamos Mocks.
+    console.warn(`API no disponible (${url}). Usando modo local.`);
     return null;
   }
 };
@@ -100,7 +108,7 @@ export const GNM_API = {
               cbu: data.cbu,
               alias: data.alias,
               accountType: 'Caja de Ahorro',
-              mpAccessToken: data.mpAccessToken // Si el backend lo devuelve (solo admin)
+              mpAccessToken: data.mpAccessToken 
           };
       }
       
@@ -114,10 +122,8 @@ export const GNM_API = {
       return { ...BANK_DETAILS };
     },
     updateBank: async (settings: BankSettings): Promise<boolean> => {
-      // Guardar en LocalStorage primero para asegurar persistencia visual inmediata
       localStorage.setItem('gnm_admin_settings', JSON.stringify(settings));
 
-      // Intentar guardar en Backend
       const res = await safeFetch(`${API_URL}/settings`, {
           method: 'PUT',
           body: JSON.stringify(settings)
@@ -142,14 +148,17 @@ export const GNM_API = {
   mercadopago: {
     createPreference: async (item: { title: string, price: number }, payer: { email: string }, metadata: { userId: string, type: string, itemId: string }): Promise<string> => {
       
+      // PRIORIDAD: Configuración Local > Constantes
       const localSettings = localStorage.getItem('gnm_admin_settings');
       let currentToken = '';
       if (localSettings) {
           const parsed = JSON.parse(localSettings);
           currentToken = parsed.mpAccessToken;
       }
-      if (!currentToken) currentToken = BANK_DETAILS.mpAccessToken;
+      // Si no hay en local, usar constants.ts (donde el usuario pegará su token)
+      if (!currentToken || currentToken.trim() === '') currentToken = BANK_DETAILS.mpAccessToken;
 
+      // Intentar procesar por Backend (Más seguro)
       const data = await safeFetch(`${API_URL}/mercadopago/create_preference`, {
           method: 'POST',
           body: JSON.stringify({
@@ -165,7 +174,11 @@ export const GNM_API = {
 
       if (data && data.init_point) return data.init_point;
       
-      console.log("Token presente pero sin backend activo:", currentToken);
+      // Fallback: Si no hay backend, devolver token de simulación 
+      // OJO: Sin backend Node.js, no se puede generar preferencia real de MP de forma segura desde el cliente
+      // a menos que uses una integración Serverless. 
+      // Por ahora, devolvemos simulación para que la UI no rompa.
+      console.log("Modo Cliente: Backend no disponible. Token usado:", currentToken ? "Presente" : "Faltante");
       return '#mp_simulation_fallback'; 
     },
     createSubscription: async (item: { title: string, price: number }, payer: { email: string }, metadata: { userId: string, type: string, itemId: string }): Promise<string> => {
@@ -174,6 +187,7 @@ export const GNM_API = {
   },
   auth: {
     login: async (email: string, pass: string): Promise<User> => {
+      // 1. Intentar Login Real contra Backend
       const data = await safeFetch(`${API_URL}/auth/login`, {
           method: 'POST',
           body: JSON.stringify({ email, password: pass })
@@ -184,31 +198,48 @@ export const GNM_API = {
         return { ...data.user, isOnline: true };
       }
 
-      // Fallback a Mocks
-      if (pass === 'demo' || pass === 'admin123' || pass.length > 3) {
-          const mock = MOCK_USERS.find(u => u.email === email);
-          if (mock) {
-            if (!mock.isVerified && mock.verificationStatus !== 'VERIFIED') {
-                throw new Error('Debes confirmar tu email antes de ingresar.');
-            }
-            return mock;
-          }
-          const localStored = localStorage.getItem('gnm_temp_users');
-          if (localStored) {
-             const tempUsers = JSON.parse(localStored);
-             const found = tempUsers.find((u: User) => u.email === email);
-             if (found) {
-                if (!found.isVerified) throw new Error('Debes confirmar tu email antes de ingresar.');
-                return found;
+      // 2. Fallback a Mocks (SOLO SI EL BACKEND FALLA)
+      const mock = MOCK_USERS.find(u => u.email === email);
+      if (mock) {
+          const isAdmin = mock.role === 'ADMIN';
+          const isCorrectAdminPass = isAdmin && pass === 'admin123';
+          const isCorrectUserPass = !isAdmin && pass === 'demo';
+
+          if (isCorrectAdminPass || isCorrectUserPass) {
+             if (!mock.isVerified && mock.verificationStatus !== 'VERIFIED') {
+                 throw new Error('Debes confirmar tu email antes de ingresar.');
              }
+             return mock;
           }
       }
+
+      // 3. Fallback a Usuarios Temporales (LocalStorage)
+      const localStored = localStorage.getItem('gnm_temp_users');
+      if (localStored) {
+          const tempUsers = JSON.parse(localStored);
+          const found = tempUsers.find((u: any) => u.email === email); 
+          
+          if (found) {
+             // SEGURIDAD CRÍTICA: Validar hash si existe
+             if (found.localHash) {
+                const isValid = await SecurityService.comparePasswords(pass, found.localHash);
+                if (!isValid) throw new Error("Contraseña incorrecta.");
+             } else {
+                if (pass.length < 6) throw new Error("Credenciales inválidas.");
+             }
+
+             if (!found.isVerified) throw new Error('Debes confirmar tu email antes de ingresar.');
+             const { localHash, ...safeUser } = found;
+             return safeUser;
+          }
+      }
+
       throw new Error('Credenciales inválidas o usuario no encontrado.');
     },
-    register: async (name: string, email: string, pass: string): Promise<User> => {
+    register: async (name: string, email: string, pass: string, birthDate: string): Promise<User> => {
       const data = await safeFetch(`${API_URL}/auth/register`, {
           method: 'POST',
-          body: JSON.stringify({ name, email, password: pass })
+          body: JSON.stringify({ name, email, password: pass, birthDate })
       });
 
       if (data) return GNM_API.auth.login(email, pass);
@@ -217,6 +248,7 @@ export const GNM_API = {
         id: `u-${Date.now()}`,
         name,
         email,
+        birthDate, 
         role: 'USER',
         status: 'ACTIVE',
         verificationStatus: 'PENDING',
@@ -228,9 +260,13 @@ export const GNM_API = {
         membership: { tier: MembershipTier.NONE, validUntil: '', usedThisMonth: 0 }
       };
 
+      // SEGURIDAD CRÍTICA: Hashear contraseña para almacenamiento local
+      const passwordHash = await SecurityService.hashPassword(pass);
+
       const localStored = localStorage.getItem('gnm_temp_users');
       const tempUsers = localStored ? JSON.parse(localStored) : [];
-      tempUsers.push(newUser);
+      
+      tempUsers.push({ ...newUser, localHash: passwordHash });
       localStorage.setItem('gnm_temp_users', JSON.stringify(tempUsers));
 
       return newUser; 
@@ -245,7 +281,8 @@ export const GNM_API = {
             tempUsers[idx].isVerified = true;
             tempUsers[idx].verificationStatus = 'VERIFIED';
             localStorage.setItem('gnm_temp_users', JSON.stringify(tempUsers));
-            return tempUsers[idx];
+            const { localHash, ...safeUser } = tempUsers[idx];
+            return safeUser;
          }
       }
       throw new Error("Usuario no encontrado para verificación");

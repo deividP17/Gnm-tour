@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Space, User } from '../../types';
-import { formatARS } from '../../services/logic';
+import { formatARS, getLocalDateFromISO } from '../../services/logic';
 import { GNM_API } from '../../services/api';
 
 interface SpacePaymentModalProps {
@@ -52,7 +52,7 @@ const SpacePaymentModal: React.FC<SpacePaymentModalProps> = ({ space, date, user
            <div className="bg-blue-50 p-6 border border-blue-100 flex justify-between items-center rounded-none">
               <div>
                  <p className="text-[10px] font-bold uppercase text-blue-600 tracking-widest">Día Seleccionado</p>
-                 <p className="text-lg font-black text-slate-900 mt-1">{new Date(date).toLocaleDateString('es-AR', { dateStyle: 'full' })}</p>
+                 <p className="text-lg font-black text-slate-900 mt-1">{getLocalDateFromISO(date).toLocaleDateString('es-AR', { dateStyle: 'full' })}</p>
               </div>
               <i className="fa-regular fa-calendar-check text-2xl text-blue-600"></i>
            </div>

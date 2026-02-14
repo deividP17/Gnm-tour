@@ -3,6 +3,31 @@ import { Tour, User, MembershipTier, Space } from '../types';
 import { MEMBERSHIP_CONFIG } from '../constants';
 
 /**
+ * Convierte un string "YYYY-MM-DD" a un objeto Date en hora LOCAL (00:00:00).
+ * Soluciona el bug de "un día menos" al visualizar fechas.
+ */
+export const getLocalDateFromISO = (dateStr: string) => {
+  if (!dateStr) return new Date();
+  const parts = dateStr.split('-');
+  // Aseguramos que se interprete como local: año, mes (0-idx), día
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1;
+  const day = parseInt(parts[2], 10);
+  return new Date(year, month, day);
+};
+
+/**
+ * Convierte un objeto Date a string "YYYY-MM-DD" usando la hora LOCAL.
+ * Evita que toISOString() cambie el día por UTC.
+ */
+export const toLocalISOString = (date: Date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
+/**
  * Calculates final price for a tour based on user membership and distance
  */
 export const calculateTourPrice = (tour: Tour, user: User | null): { finalPrice: number, discountApplied: boolean } => {
@@ -157,7 +182,8 @@ export const calculateSpaceCostBreakdown = (space: Space, user: User | null): Sp
  * Checks if a cancellation is within the 48hs window
  */
 export const isCancellationRefundable = (startDate: string): boolean => {
-  const start = new Date(startDate).getTime();
+  // getLocalDateFromISO para comparar correctamente fechas sin horas
+  const start = getLocalDateFromISO(startDate).getTime();
   const now = new Date().getTime();
   const hoursDiff = (start - now) / (1000 * 60 * 60);
   return hoursDiff >= 48;

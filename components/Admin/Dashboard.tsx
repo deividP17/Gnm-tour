@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Tour, Space, User, MembershipTier, SiteAsset, BankSettings } from '../../types';
-import { formatARS } from '../../services/logic';
+import { formatARS, toLocalISOString } from '../../services/logic'; // IMPORT ACTUALIZADO
 import { GNM_API } from '../../services/api';
 import { MEMBERSHIP_CONFIG } from '../../constants';
 
@@ -376,7 +376,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ tours, spaces, onAddTou
                       {['D','L','M','X','J','V','S'].map(d => <div key={d} className="text-center text-[10px] font-black text-slate-300 py-3 uppercase">{d}</div>)}
                       {Array.from({ length: adminDays[0].getDay() }).map((_, i) => <div key={i} className="aspect-square"></div>)}
                       {adminDays.map((date, i) => {
-                        const dateStr = date.toISOString().split('T')[0];
+                        const dateStr = toLocalISOString(date); // USO DE HELPER LOCAL
                         const isOccupied = space.availability?.includes(dateStr);
                         return (
                           <button 

@@ -14,12 +14,20 @@ const Auth: React.FC<AuthProps> = ({ onAuthSuccess, onCancel }) => {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
+    birthDate: '',
     password: '',
     confirmPassword: ''
   });
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [waitingVerification, setWaitingVerification] = useState(false); // Nuevo estado
+
+  const validatePassword = (pass: string) => {
+    if (pass.length <= 6) return "La contraseña debe tener más de 6 caracteres.";
+    if (!/\d/.test(pass)) return "La contraseña debe incluir al menos un número.";
+    if (!/[!@#$%^&*(),.?":{}|<>]/.test(pass)) return "La contraseña debe incluir al menos un carácter especial (@, #, !, etc).";
+    return null;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,9 +38,17 @@ const Auth: React.FC<AuthProps> = ({ onAuthSuccess, onCancel }) => {
       setError('Formato de email inválido.');
       return;
     }
-    if (formData.password.length < 6) {
-      setError('La contraseña debe tener al menos 6 caracteres.');
-      return;
+
+    if (!isLogin) {
+      const passError = validatePassword(formData.password);
+      if (passError) {
+        setError(passError);
+        return;
+      }
+      if (!formData.birthDate) {
+        setError('La fecha de nacimiento es obligatoria.');
+        return;
+      }
     }
 
     setIsSubmitting(true);
@@ -44,8 +60,8 @@ const Auth: React.FC<AuthProps> = ({ onAuthSuccess, onCancel }) => {
           throw new Error('Las contraseñas no coinciden.');
         }
         
-        // REGISTRO
-        const user = await GNM_API.auth.register(formData.name, formData.email, formData.password);
+        // REGISTRO (Ahora incluye birthDate)
+        const user = await GNM_API.auth.register(formData.name, formData.email, formData.password, formData.birthDate);
         
         // Simular envío de email
         EmailService.sendEmail(
@@ -154,17 +170,31 @@ const Auth: React.FC<AuthProps> = ({ onAuthSuccess, onCancel }) => {
         </div>
 
         {!isLogin && (
-          <div className="space-y-1 animate-in fade-in slide-in-from-top-2 duration-300">
-            <label className="text-[10px] font-bold uppercase text-slate-500">Nombre Completo</label>
-            <input
-              required
-              disabled={isSubmitting}
-              type="text"
-              className="w-full p-3 bg-white border border-slate-300 focus:border-blue-600 outline-none transition-colors font-medium rounded-none"
-              value={formData.name}
-              onChange={(e) => setFormData({...formData, name: e.target.value})}
-            />
-          </div>
+          <>
+            <div className="space-y-1 animate-in fade-in slide-in-from-top-2 duration-300">
+                <label className="text-[10px] font-bold uppercase text-slate-500">Nombre Completo</label>
+                <input
+                required
+                disabled={isSubmitting}
+                type="text"
+                className="w-full p-3 bg-white border border-slate-300 focus:border-blue-600 outline-none transition-colors font-medium rounded-none"
+                value={formData.name}
+                onChange={(e) => setFormData({...formData, name: e.target.value})}
+                />
+            </div>
+            <div className="space-y-1 animate-in fade-in slide-in-from-top-2 duration-300">
+                <label className="text-[10px] font-bold uppercase text-slate-500">Fecha de Nacimiento</label>
+                <input
+                required
+                disabled={isSubmitting}
+                type="date"
+                max={new Date().toISOString().split("T")[0]}
+                className="w-full p-3 bg-white border border-slate-300 focus:border-blue-600 outline-none transition-colors font-medium rounded-none text-slate-600"
+                value={formData.birthDate}
+                onChange={(e) => setFormData({...formData, birthDate: e.target.value})}
+                />
+            </div>
+          </>
         )}
 
         <div className="space-y-1">
@@ -180,7 +210,9 @@ const Auth: React.FC<AuthProps> = ({ onAuthSuccess, onCancel }) => {
         </div>
 
         <div className="space-y-1">
-          <label className="text-[10px] font-bold uppercase text-slate-500">Contraseña</label>
+          <label className="text-[10px] font-bold uppercase text-slate-500">
+             {isLogin ? 'Contraseña' : 'Contraseña (Min 6 car., # y Signo)'}
+          </label>
           <input
             required
             disabled={isSubmitting}
@@ -207,7 +239,7 @@ const Auth: React.FC<AuthProps> = ({ onAuthSuccess, onCancel }) => {
 
         {error && (
           <div className="bg-red-50 p-3 border border-red-200 rounded-none">
-            <p className="text-red-600 text-[10px] font-bold text-center uppercase tracking-widest">{error}</p>
+            <p className="text-red-600 text-[10px] font-bold text-center uppercase tracking-widest leading-relaxed">{error}</p>
           </div>
         )}
 

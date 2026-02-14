@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Tour, User, BankSettings } from '../../types';
-import { TourCostBreakdown, formatARS } from '../../services/logic';
+import { TourCostBreakdown, formatARS, getLocalDateFromISO } from '../../services/logic';
 import { GNM_API } from '../../services/api';
 
 interface TourPaymentModalProps {
@@ -31,8 +31,8 @@ const TourPaymentModal: React.FC<TourPaymentModalProps> = ({ tour, breakdown, us
       const userEmail = user ? user.email : 'invitado@gnm.com';
       const userId = user ? user.id : 'guest';
       
-      // Formatear la fecha para el título
-      const dateStr = new Date(startDate).toLocaleDateString('es-AR');
+      // Formatear la fecha para el título usando helper local
+      const dateStr = getLocalDateFromISO(startDate).toLocaleDateString('es-AR');
 
       // Crear preferencia con título descriptivo (Destino + Pax + Fecha)
       const initPoint = await GNM_API.mercadopago.createPreference(
@@ -57,7 +57,7 @@ const TourPaymentModal: React.FC<TourPaymentModalProps> = ({ tour, breakdown, us
   };
 
   const handleTransferNotification = () => {
-     const dateStr = new Date(startDate).toLocaleDateString('es-AR');
+     const dateStr = getLocalDateFromISO(startDate).toLocaleDateString('es-AR');
      const message = `Hola! Quiero confirmar mi reserva para *${tour.destination}*.\n\n📅 Fecha: ${dateStr}\n👥 Pasajeros: ${pax}\n💰 Total Transferido: ${formatARS(totalAmount)}\n\nAdjunto comprobante.`;
      const encoded = encodeURIComponent(message);
      window.open(`https://wa.me/543794532196?text=${encoded}`, '_blank');
@@ -88,7 +88,7 @@ const TourPaymentModal: React.FC<TourPaymentModalProps> = ({ tour, breakdown, us
         {/* RESUMEN DE SELECCIÓN */}
         <div className="bg-blue-50 p-4 flex justify-between items-center border-b border-blue-100">
            <div className="flex items-center gap-4 text-xs font-bold uppercase text-slate-700">
-              <span><i className="fa-regular fa-calendar mr-2 text-blue-500"></i> {new Date(startDate).toLocaleDateString('es-AR')}</span>
+              <span><i className="fa-regular fa-calendar mr-2 text-blue-500"></i> {getLocalDateFromISO(startDate).toLocaleDateString('es-AR')}</span>
               <span><i className="fa-solid fa-user-group mr-2 text-blue-500"></i> {pax} Pax</span>
            </div>
            <div className="text-xs font-black text-blue-900 bg-white px-2 py-1 border border-blue-200 rounded-none">
@@ -159,7 +159,7 @@ const TourPaymentModal: React.FC<TourPaymentModalProps> = ({ tour, breakdown, us
                       <button onClick={() => copyToClipboard(bankDetails.cbu)} className="text-xs font-bold uppercase text-blue-600 hover:text-blue-800">Copiar</button>
                    </div>
                    <div className="bg-amber-50 border border-amber-200 p-4 text-[10px] font-bold text-amber-800 uppercase rounded-none">
-                      Recuerda enviar el comprobante por WhatsApp indicando la fecha de salida ({new Date(startDate).toLocaleDateString()}) y cantidad de pasajeros ({pax}).
+                      Recuerda enviar el comprobante por WhatsApp indicando la fecha de salida ({getLocalDateFromISO(startDate).toLocaleDateString()}) y cantidad de pasajeros ({pax}).
                    </div>
                    <button onClick={handleTransferNotification} className="w-full bg-green-600 text-white py-5 font-bold text-xs uppercase tracking-widest hover:bg-green-700 transition-colors rounded-none mt-4">
                       Notificar Pago

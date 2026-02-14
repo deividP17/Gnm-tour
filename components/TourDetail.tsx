@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Tour, User } from '../types';
-import { calculateTourCostBreakdown, formatARS } from '../services/logic';
+import { calculateTourCostBreakdown, formatARS, getLocalDateFromISO } from '../services/logic'; // Helper importado
 import TourPaymentModal from './Payment/TourPaymentModal';
 
 interface TourDetailProps {
@@ -24,12 +24,16 @@ const TourDetail: React.FC<TourDetailProps> = ({ tour, user, onBack, onNavigateL
   
   const getEndDate = (start: string) => {
     if (!start) return '';
-    const date = new Date(start);
+    // Usar getLocalDateFromISO para consistencia de fechas
+    const date = getLocalDateFromISO(start);
     date.setDate(date.getDate() + (durationDays - 1));
-    return date.toISOString().split('T')[0];
+    return date;
   };
 
   const endDate = getEndDate(startDate);
+  // Parsear startDate para mostrar correctamente
+  const startObj = getLocalDateFromISO(startDate);
+  
   const totalAmount = breakdown.finalTotal * pax;
 
   return (
@@ -74,10 +78,10 @@ const TourDetail: React.FC<TourDetailProps> = ({ tour, user, onBack, onNavigateL
             <div className="bg-black/30 backdrop-blur-md border border-white/10 p-6 text-white min-w-[280px] rounded-none">
               <p className="text-[10px] font-bold uppercase tracking-widest opacity-60 mb-2">Salida Confirmada</p>
               <div className="flex items-center gap-4">
-                 <div className="text-5xl font-black">{new Date(startDate).getDate()}</div>
+                 <div className="text-5xl font-black">{startObj.getDate()}</div>
                  <div className="flex flex-col leading-none">
-                    <span className="text-sm font-bold uppercase">{new Date(startDate).toLocaleDateString('es-AR', {month: 'long'})}</span>
-                    <span className="text-sm opacity-60">{new Date(startDate).getFullYear()}</span>
+                    <span className="text-sm font-bold uppercase">{startObj.toLocaleDateString('es-AR', {month: 'long'})}</span>
+                    <span className="text-sm opacity-60">{startObj.getFullYear()}</span>
                  </div>
               </div>
             </div>
@@ -129,9 +133,11 @@ const TourDetail: React.FC<TourDetailProps> = ({ tour, user, onBack, onNavigateL
                   <div className="bg-blue-50 border border-blue-100 p-6 flex flex-col justify-center items-center rounded-none text-center space-y-2">
                       <p className="text-[10px] font-bold uppercase text-blue-500 tracking-widest">Fecha de Salida</p>
                       <p className="text-2xl font-black text-blue-900 uppercase">
-                         {new Date(startDate).toLocaleDateString('es-AR', {dateStyle: 'full'})}
+                         {startObj.toLocaleDateString('es-AR', {dateStyle: 'full'})}
                       </p>
-                      <p className="text-xs font-bold text-slate-400 uppercase">Regreso: {new Date(endDate).toLocaleDateString('es-AR', {day: 'numeric', month: 'short'})}</p>
+                      {endDate && (
+                        <p className="text-xs font-bold text-slate-400 uppercase">Regreso: {endDate.toLocaleDateString('es-AR', {day: 'numeric', month: 'short'})}</p>
+                      )}
                   </div>
 
                   {/* Pasajeros */}

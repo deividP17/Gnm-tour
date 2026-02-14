@@ -12,7 +12,7 @@ export type VerificationStatus = 'NONE' | 'PENDING' | 'VERIFIED' | 'REJECTED';
 
 export interface Notification {
   id: string;
-  type: 'BOOKING' | 'MEMBERSHIP' | 'VERIFICATION' | 'SYSTEM' | 'SPACE_BOOKING' | 'CANCELLATION';
+  type: 'BOOKING' | 'MEMBERSHIP' | 'VERIFICATION' | 'SYSTEM' | 'SPACE_BOOKING' | 'CANCELLATION' | 'BIRTHDAY';
   title: string;
   message: string;
   timestamp: string;
@@ -45,6 +45,7 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  birthDate?: string; // Nuevo campo para cumpleaños
   role: 'USER' | 'ADMIN';
   status: UserStatus;
   verificationStatus: VerificationStatus;

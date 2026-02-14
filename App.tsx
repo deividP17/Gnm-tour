@@ -62,7 +62,11 @@ const App: React.FC = () => {
         setSpaces(fetchedSpaces);
         setAssets(fetchedAssets);
         const savedUser = localStorage.getItem('gnm_user');
-        if (savedUser) setUser(JSON.parse(savedUser));
+        if (savedUser) {
+           const parsedUser = JSON.parse(savedUser);
+           setUser(parsedUser);
+           checkBirthday(parsedUser);
+        }
       } finally {
         setIsLoading(false);
       }
@@ -76,6 +80,33 @@ const App: React.FC = () => {
     window.addEventListener('gnm-email-sent', handleEmailEvent);
     return () => window.removeEventListener('gnm-email-sent', handleEmailEvent);
   }, []);
+
+  const checkBirthday = (userData: User) => {
+      if (!userData.birthDate) return;
+      
+      const today = new Date();
+      const birth = new Date(userData.birthDate);
+      
+      // La comparación básica de día y mes (se ignora zona horaria para simplificar demo)
+      // Ajustamos 'birth' para que coincida con el año actual si fuera necesario comparar
+      if (today.getDate() === birth.getDate() + 1 && today.getMonth() === birth.getMonth()) { // +1 por issue de timezone en lectura directa a veces, o usamos getUTCDate
+         // Para mayor precisión, mejor usar strings
+         const tStr = `${today.getMonth()+1}-${today.getDate()}`;
+         const bStr = `${birth.getMonth()+1}-${birth.getDate()+1}`; // Ajuste por parseo ISO
+         
+         // Verificamos si ya se envió hoy (usando sessionStorage)
+         const sentKey = `gnm_bday_sent_${userData.id}_${today.getFullYear()}`;
+         if (!sessionStorage.getItem(sentKey)) {
+             // Es su cumple!
+             EmailService.sendEmail(
+                 userData.email,
+                 "¡Feliz Cumpleaños te desea GNM TOUR! 🎉",
+                 `Hola ${userData.name}, ¡esperamos que tengas un día increíble! Gracias por elegirnos para tus aventuras.`
+             );
+             sessionStorage.setItem(sentKey, 'true');
+         }
+      }
+  };
 
   const handleNavigate = (view: string) => {
     setCurrentView(view);
@@ -385,7 +416,7 @@ const App: React.FC = () => {
 
       {currentView === 'login' && (
         <div className="py-12">
-          <Auth onAuthSuccess={(u) => { setUser(u); localStorage.setItem('gnm_user', JSON.stringify(u)); setCurrentView('home'); }} onCancel={() => handleNavigate('home')} />
+          <Auth onAuthSuccess={(u) => { setUser(u); localStorage.setItem('gnm_user', JSON.stringify(u)); setCurrentView('home'); checkBirthday(u); }} onCancel={() => handleNavigate('home')} />
         </div>
       )}
       
