@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Tour, Space, User, MembershipTier, SiteAsset, BankSettings } from '../../types';
-import { formatARS, toLocalISOString } from '../../services/logic'; // IMPORT ACTUALIZADO
+import { formatARS, toLocalISOString } from '../../services/logic'; 
 import { GNM_API } from '../../services/api';
 import { MEMBERSHIP_CONFIG } from '../../constants';
 
@@ -11,9 +11,10 @@ interface AdminDashboardProps {
   onAddTour: (tour: Tour) => void;
   onDeleteTour: (id: string) => void;
   onUpdateSpace: (id: string, updates: Partial<Space>) => void;
+  onRefreshAssets?: () => void; // Callback para avisar a App.tsx que recargue imágenes
 }
 
-const AdminDashboard: React.FC<AdminDashboardProps> = ({ tours, spaces, onAddTour, onDeleteTour, onUpdateSpace }) => {
+const AdminDashboard: React.FC<AdminDashboardProps> = ({ tours, spaces, onAddTour, onDeleteTour, onUpdateSpace, onRefreshAssets }) => {
   const [activeTab, setActiveTab] = useState<'users' | 'media' | 'spaces_control' | 'settings'>('users');
   const [users, setUsers] = useState<User[]>([]);
   const [assets, setAssets] = useState<SiteAsset[]>([]);
@@ -21,6 +22,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ tours, spaces, onAddTou
   const [isLoading, setIsLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [uploadingAssetId, setUploadingAssetId] = useState<string | null>(null);
 
   const [adminViewDate, setAdminViewDate] = useState(new Date());
 
@@ -94,15 +96,44 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ tours, spaces, onAddTou
     onUpdateSpace(spaceId, { availability: newDates });
   };
 
-  const handleUpdateAsset = (id: string, newUrl: string) => {
-    setAssets(assets.map(a => a.id === id ? { ...a, url: newUrl } : a));
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, assetId: string) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, assetId: string) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // Validación de seguridad de archivo
+    if (!file.type.startsWith('image/')) {
+        alert("Solo se permiten archivos de imagen.");
+        return;
+    }
+    // Límite de 4MB para consistencia y seguridad
+    if (file.size > 4 * 1024 * 1024) { 
+        alert("La imagen es demasiado grande. Máximo 4MB para asegurar la estabilidad.");
+        return;
+    }
+
+    setUploadingAssetId(assetId);
+    
     const reader = new FileReader();
-    reader.onloadend = () => handleUpdateAsset(assetId, reader.result as string);
+    reader.onloadend = async () => {
+        const base64Url = reader.result as string;
+        
+        try {
+            // 1. Actualizar estado local para feedback inmediato
+            setAssets(assets.map(a => a.id === assetId ? { ...a, url: base64Url } : a));
+            
+            // 2. Guardar en Backend (CRÍTICO)
+            await GNM_API.assets.update(assetId, base64Url);
+            
+            // 3. Avisar a la App principal para que actualice la imagen de fondo
+            if (onRefreshAssets) onRefreshAssets();
+
+        } catch (error) {
+            console.error("Error al subir imagen:", error);
+            alert("Error al guardar la imagen en el servidor.");
+        } finally {
+            setUploadingAssetId(null);
+        }
+    };
     reader.readAsDataURL(file);
   };
 
@@ -149,21 +180,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ tours, spaces, onAddTou
                   ))}
                </div>
             </div>
-
-            {user.membership?.cancellationReason && (
-              <div className="mt-6 w-full p-4 bg-red-50 border border-red-200 text-left">
-                 <p className="text-[8px] font-black text-red-600 uppercase tracking-widest mb-1 flex items-center gap-1">
-                    <i className="fa-solid fa-circle-exclamation"></i> Alerta de Baja
-                 </p>
-                 <p className="text-[10px] font-bold text-red-900 italic">"{user.membership.cancellationReason}"</p>
-              </div>
-            )}
           </div>
 
           <div className="lg:col-span-2 space-y-8">
             <div className="bg-white border border-slate-200 p-8">
-               <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-6 border-b pb-4">Historial de Viajes y Estado</h4>
+               <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-6 border-b pb-4">Historial de Reservas</h4>
                <div className="space-y-4">
+                  {/* VIAJES */}
                   {user.travelHistory?.map(trip => (
                     <div key={trip.id} className={`flex justify-between items-center p-5 border text-xs ${trip.status === 'CANCELLED' ? 'bg-red-50 border-red-100' : 'bg-slate-50 border-slate-100'}`}>
                        <div className="flex items-center gap-4">
@@ -172,33 +195,42 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ tours, spaces, onAddTou
                           </div>
                           <div>
                             <p className="font-bold text-slate-900 uppercase">{trip.destination}</p>
-                            <p className="text-slate-400 mt-0.5">{trip.date} • {trip.pax} Pasajeros</p>
+                            <p className="text-slate-400 mt-0.5">{trip.date} • {trip.pax} Pax</p>
                             {trip.cancellationReason && (
-                              <p className="text-[9px] text-red-500 font-bold uppercase mt-1">MOTIVO CANCELACIÓN: {trip.cancellationReason}</p>
+                              <p className="text-[9px] text-red-500 font-bold uppercase mt-1">CANCELADO: {trip.cancellationReason}</p>
                             )}
                           </div>
                        </div>
                        <div className="text-right">
                           <p className="font-black text-slate-900">{formatARS(trip.totalPaid)}</p>
-                          <span className={`text-[8px] font-black uppercase px-3 py-1 mt-1 inline-block ${trip.status === 'CANCELLED' ? 'bg-red-600 text-white' : trip.status === 'COMPLETED' ? 'bg-green-600 text-white' : 'bg-blue-600 text-white'}`}>{trip.status}</span>
+                          <span className={`text-[8px] font-black uppercase px-3 py-1 mt-1 inline-block ${trip.status === 'CANCELLED' ? 'bg-red-600 text-white' : 'bg-blue-600 text-white'}`}>{trip.status}</span>
                        </div>
                     </div>
-                  )) || <p className="text-center text-slate-300 py-10 font-bold uppercase text-[10px]">Sin viajes registrados</p>}
-               </div>
-            </div>
+                  ))}
+                  
+                  {/* ESPACIOS */}
+                  {user.spaceBookings?.map(sb => (
+                     <div key={sb.id} className={`flex justify-between items-center p-5 border text-xs ${sb.status === 'CANCELLED' ? 'bg-red-50 border-red-100' : 'bg-amber-50 border-amber-100'}`}>
+                        <div className="flex items-center gap-4">
+                           <div className={`w-10 h-10 flex items-center justify-center text-lg ${sb.status === 'CANCELLED' ? 'text-red-300' : 'text-amber-500'}`}>
+                              <i className="fa-solid fa-house-chimney"></i>
+                           </div>
+                           <div>
+                             <p className="font-bold text-slate-900 uppercase">{sb.spaceName}</p>
+                             <p className="text-slate-400 mt-0.5">{sb.date}</p>
+                             {sb.cancellationReason && (
+                               <p className="text-[9px] text-red-500 font-bold uppercase mt-1">CANCELADO: {sb.cancellationReason}</p>
+                             )}
+                           </div>
+                        </div>
+                        <div className="text-right">
+                           <p className="font-black text-slate-900">{formatARS(sb.price)}</p>
+                           <span className={`text-[8px] font-black uppercase px-3 py-1 mt-1 inline-block ${sb.status === 'CANCELLED' ? 'bg-red-600 text-white' : 'bg-amber-500 text-white'}`}>{sb.status}</span>
+                        </div>
+                     </div>
+                  ))}
 
-            <div className="bg-white border border-slate-200 p-8">
-               <h4 className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-6 border-b pb-4">Buzón de Notificaciones Enviadas</h4>
-               <div className="space-y-3">
-                  {user.notifications?.map(n => (
-                    <div key={n.id} className="p-4 bg-slate-50 border border-slate-100 flex justify-between gap-4">
-                       <div className="flex-1">
-                          <p className={`text-[9px] font-black uppercase ${n.type === 'CANCELLATION' ? 'text-red-600' : 'text-slate-900'}`}>{n.title}</p>
-                          <p className="text-[10px] text-slate-500 italic mt-1 leading-relaxed">"{n.message}"</p>
-                       </div>
-                       <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tighter shrink-0">{new Date(n.timestamp).toLocaleDateString()}</span>
-                    </div>
-                  )) || <p className="text-center text-slate-300 py-6 text-[10px] font-bold uppercase">Sin notificaciones</p>}
+                  {(!user.travelHistory?.length && !user.spaceBookings?.length) && <p className="text-center text-slate-300 py-10 font-bold uppercase text-[10px]">Sin reservas registradas</p>}
                </div>
             </div>
           </div>
@@ -316,33 +348,26 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ tours, spaces, onAddTou
         )}
 
         {!isLoading && activeTab === 'media' && (
-          <div className="space-y-12 animate-in fade-in duration-500">
-             <div className="flex flex-col md:flex-row justify-between items-end gap-6 border-b border-slate-100 pb-8">
-                <div>
-                   <h2 className="text-3xl font-black uppercase italic leading-none">Biblioteca de Medios</h2>
-                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-2">Personaliza las imágenes principales de la plataforma GNM.</p>
+            <div className="space-y-6">
+                <h2 className="text-3xl font-black uppercase italic">Biblioteca de Medios</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                    {assets.map(asset => (
+                        <div key={asset.id} className="bg-white border border-slate-200 p-6 space-y-6 shadow-sm group">
+                            <div className="relative aspect-video bg-slate-100 overflow-hidden border border-slate-200">
+                                <img src={asset.url} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" alt={asset.label} />
+                            </div>
+                            <div className="space-y-1">
+                                <h4 className="font-black uppercase text-xs text-slate-900">{asset.label}</h4>
+                            </div>
+                            <label className={`block w-full text-center text-white py-4 text-[9px] font-black uppercase tracking-widest cursor-pointer transition-colors ${uploadingAssetId === asset.id ? 'bg-blue-400' : 'bg-slate-900 hover:bg-blue-600'}`}>
+                                <i className={`fa-solid ${uploadingAssetId === asset.id ? 'fa-spinner fa-spin' : 'fa-upload'} mr-2`}></i> 
+                                {uploadingAssetId === asset.id ? 'Guardando...' : 'Subir Nueva Foto'}
+                                <input type="file" className="hidden" accept="image/*" disabled={uploadingAssetId === asset.id} onChange={(e) => handleFileUpload(e, asset.id)} />
+                            </label>
+                        </div>
+                    ))}
                 </div>
-             </div>
-
-             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                {assets.map(asset => (
-                  <div key={asset.id} className="bg-white border border-slate-200 p-6 space-y-6 shadow-sm group">
-                     <div className="relative aspect-video bg-slate-100 overflow-hidden border border-slate-200">
-                        <img src={asset.url} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" alt={asset.label} />
-                        <div className="absolute top-2 left-2 bg-slate-900/80 text-white px-2 py-1 text-[8px] font-black uppercase tracking-widest">{asset.category}</div>
-                     </div>
-                     <div className="space-y-1">
-                        <h4 className="font-black uppercase text-xs text-slate-900">{asset.label}</h4>
-                        <p className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Key: {asset.key}</p>
-                     </div>
-                     <label className="block w-full text-center bg-slate-900 text-white py-4 text-[9px] font-black uppercase tracking-widest cursor-pointer hover:bg-blue-600 transition-colors">
-                        <i className="fa-solid fa-upload mr-2"></i> Subir Nueva Foto
-                        <input type="file" className="hidden" accept="image/*" onChange={(e) => handleFileUpload(e, asset.id)} />
-                     </label>
-                  </div>
-                ))}
-             </div>
-          </div>
+            </div>
         )}
 
         {!isLoading && activeTab === 'spaces_control' && (
@@ -350,7 +375,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ tours, spaces, onAddTou
              <div className="flex flex-col md:flex-row justify-between items-end gap-6 bg-slate-50 p-10 border border-slate-200">
                 <div className="space-y-2">
                    <h2 className="text-3xl font-black uppercase italic leading-none">Ocupación Mensual</h2>
-                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Control maestro de fechas. Haz clic en un día para bloquearlo manualmente.</p>
+                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Control maestro de fechas.</p>
                 </div>
                 <div className="flex items-center gap-4 bg-white p-3 border border-slate-200 shadow-sm">
                    <button onClick={() => setAdminViewDate(new Date(adminViewDate.getFullYear(), adminViewDate.getMonth() - 1, 1))} className="w-10 h-10 flex items-center justify-center hover:bg-slate-50 transition-colors"><i className="fa-solid fa-chevron-left text-xs"></i></button>
@@ -366,17 +391,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ tours, spaces, onAddTou
                         <h3 className="text-xl font-black uppercase flex items-center gap-3">
                           <i className="fa-solid fa-building-user text-blue-600"></i> {space.name}
                         </h3>
-                        <div className="text-right">
-                            <p className="text-[9px] font-black uppercase text-slate-400">Estado</p>
-                            <p className="text-xs font-black text-slate-900 uppercase">GESTIÓN ACTIVA</p>
-                        </div>
                     </div>
                     
                     <div className="grid grid-cols-7 gap-1.5">
                       {['D','L','M','X','J','V','S'].map(d => <div key={d} className="text-center text-[10px] font-black text-slate-300 py-3 uppercase">{d}</div>)}
                       {Array.from({ length: adminDays[0].getDay() }).map((_, i) => <div key={i} className="aspect-square"></div>)}
                       {adminDays.map((date, i) => {
-                        const dateStr = toLocalISOString(date); // USO DE HELPER LOCAL
+                        const dateStr = toLocalISOString(date); 
                         const isOccupied = space.availability?.includes(dateStr);
                         return (
                           <button 
@@ -387,14 +408,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ tours, spaces, onAddTou
                             }`}
                           >
                             {date.getDate()}
-                            {isOccupied && <div className="absolute top-1 right-1 w-1 h-1 bg-white/50 rounded-full"></div>}
                           </button>
                         );
                       })}
-                    </div>
-                    <div className="mt-8 pt-6 border-t border-slate-100 flex items-center gap-4 text-[10px] font-bold uppercase text-slate-400">
-                        <span className="flex items-center gap-2"><div className="w-3 h-3 bg-red-500 border border-red-200"></div> BLOQUEADO</span>
-                        <span className="flex items-center gap-2"><div className="w-3 h-3 bg-white border border-slate-100"></div> LIBRE</span>
                     </div>
                   </div>
                 ))}
@@ -407,100 +423,80 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ tours, spaces, onAddTou
              <div className="text-center space-y-2">
                 <i className="fa-solid fa-sliders text-4xl text-blue-600 mb-4"></i>
                 <h2 className="text-3xl font-black uppercase italic leading-none">Configuración Maestra GNM</h2>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Ajustes financieros, datos bancarios y pasarela de pago.</p>
              </div>
              
              <div className="bg-slate-50 p-10 md:p-14 border border-slate-200 space-y-10 shadow-sm">
                 
-                {/* CONFIGURACIÓN DE SUSCRIPCIONES */}
+                {/* CONFIGURACIÓN DE CANCELACIONES */}
+                <div className="bg-white border border-slate-200 p-8 space-y-4 shadow-sm">
+                    <div className="flex items-center gap-3 text-red-600">
+                        <i className="fa-solid fa-clock-rotate-left text-2xl"></i>
+                        <h4 className="font-black uppercase tracking-tight text-lg">Política de Reembolso</h4>
+                    </div>
+                    <p className="text-[10px] text-slate-500 font-medium">
+                        Define con cuántas horas de anticipación se permite cancelar recibiendo el 100% del dinero.
+                        Si cancelan después de este límite (último momento), recibirán el 50% y tú te quedas con el resto.
+                    </p>
+                    <div className="flex items-center gap-4">
+                        <input 
+                            type="number" 
+                            min="0"
+                            className="w-24 p-3 border border-slate-300 font-black text-center text-lg outline-none focus:border-red-600"
+                            value={bankSettings.cancellationHours || 72}
+                            onChange={(e) => setBankSettings({...bankSettings, cancellationHours: Number(e.target.value)})}
+                        />
+                        <span className="text-xs font-bold uppercase text-slate-700">Horas (Equivale a {((bankSettings.cancellationHours || 72) / 24).toFixed(1)} días)</span>
+                    </div>
+                </div>
+
+                {/* SUBSCRIPTION LINKS */}
                 <div className="bg-white border border-blue-200 p-8 space-y-6 shadow-sm">
-                   <div className="flex items-center gap-3 text-blue-700">
-                      <i className="fa-regular fa-credit-card text-2xl"></i>
-                      <h4 className="font-black uppercase tracking-tight text-lg">Links de Suscripción Automática</h4>
-                   </div>
-                   <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
-                      Para habilitar el <strong>Débito Automático Mensual</strong>, debes crear los planes en tu panel de Mercado Pago y pegar aquí los links correspondientes (o 'init_point').
-                   </p>
-                   
+                   <h4 className="font-black uppercase tracking-tight text-lg text-blue-700">Links de Suscripción</h4>
                    <div className="grid grid-cols-1 gap-6">
-                      {[MembershipTier.BASICO, MembershipTier.INTERMEDIO, MembershipTier.PLUS, MembershipTier.ELITE].map(tier => {
-                         const link = bankSettings.subscriptionLinks?.[tier];
-                         const isEmpty = !link || link.trim() === '';
-                         
-                         return (
-                           <div key={tier} className="space-y-1 relative">
-                              <label className="flex items-center justify-between text-[9px] font-bold uppercase text-slate-500">
-                                <span>Plan {tier}</span>
-                                {isEmpty && <span className="text-red-500 flex items-center gap-1"><i className="fa-solid fa-triangle-exclamation"></i> Link Faltante</span>}
-                              </label>
+                      {[MembershipTier.BASICO, MembershipTier.INTERMEDIO, MembershipTier.PLUS, MembershipTier.ELITE].map(tier => (
+                           <div key={tier} className="space-y-1">
+                              <label className="text-[9px] font-bold uppercase text-slate-500">Plan {tier}</label>
                               <input 
                                 type="text" 
-                                placeholder={`https://www.mercadopago.com.ar/subscriptions/checkout?preapproval_plan_id=...`}
-                                value={link || ''}
-                                className={`w-full p-3 bg-slate-50 border text-xs outline-none focus:bg-white transition-colors ${isEmpty ? 'border-red-200 bg-red-50 focus:border-red-500' : 'border-slate-200 focus:border-blue-600'}`}
+                                value={bankSettings.subscriptionLinks?.[tier] || ''}
+                                className="w-full p-3 bg-slate-50 border border-slate-200 text-xs outline-none focus:bg-white transition-colors"
                                 onChange={(e) => setBankSettings({
                                    ...bankSettings,
-                                   subscriptionLinks: {
-                                      ...(bankSettings.subscriptionLinks || {}),
-                                      [tier]: e.target.value
-                                   }
+                                   subscriptionLinks: { ...(bankSettings.subscriptionLinks || {}), [tier]: e.target.value }
                                 })}
                               />
                            </div>
-                         );
-                      })}
+                      ))}
                    </div>
                 </div>
 
-                <div className="space-y-4 border-t border-slate-200 pt-8">
-                   <div className="flex items-center justify-between">
-                       <label className="text-[10px] font-black uppercase text-slate-900 tracking-widest">Mercado Pago - Access Token</label>
-                       <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 uppercase tracking-tighter">Producción (Checkout Pro)</span>
-                   </div>
-                   <div className="relative">
-                       <i className="fa-solid fa-key absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
-                       <input 
-                        type="password" 
-                        value={bankSettings.mpAccessToken || ''} 
-                        className="w-full pl-10 pr-4 py-5 bg-white border border-slate-300 text-xs font-black outline-none focus:border-blue-600 transition-all placeholder:text-slate-200"
-                        placeholder="APP_USR-7823XXXXXXXXXXXXXXX"
-                        onChange={(e) => setBankSettings({...bankSettings, mpAccessToken: e.target.value})}
-                       />
-                   </div>
-                   <p className="text-[8px] font-bold text-slate-400 uppercase leading-relaxed tracking-wider italic">Este token es vital para procesar suscripciones automáticas y cobros de tours/espacios.</p>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  <div className="space-y-2">
-                     <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Titular de Cuenta</label>
-                     <input type="text" value={bankSettings.owner} className="w-full p-4 bg-white border border-slate-300 text-xs font-black uppercase outline-none focus:border-slate-900" onChange={(e) => setBankSettings({...bankSettings, owner: e.target.value})} />
-                  </div>
-                  <div className="space-y-2">
-                     <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">CUIT / CUIL</label>
-                     <input type="text" value={bankSettings.cuit} className="w-full p-4 bg-white border border-slate-300 text-xs font-black outline-none" onChange={(e) => setBankSettings({...bankSettings, cuit: e.target.value})} />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {/* DATOS BANCARIOS */}
+                <div className="bg-white border border-slate-200 p-8 space-y-6 shadow-sm">
+                   <h4 className="font-black uppercase tracking-tight text-lg text-slate-900 border-b pb-2">Datos Bancarios para Transferencias</h4>
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     <div className="space-y-2">
-                    <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Banco / Entidad</label>
-                    <input type="text" value={bankSettings.bank || ''} className="w-full p-4 bg-white border border-slate-300 text-xs font-black uppercase outline-none" onChange={(e) => setBankSettings({...bankSettings, bank: e.target.value})} />
+                        <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Titular de Cuenta</label>
+                        <input type="text" value={bankSettings.owner} className="w-full p-4 bg-slate-50 border border-slate-200 text-xs font-black uppercase outline-none focus:bg-white transition-colors" onChange={(e) => setBankSettings({...bankSettings, owner: e.target.value})} />
                     </div>
                     <div className="space-y-2">
-                    <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">CBU / CVU</label>
-                    <input type="text" value={bankSettings.cbu} className="w-full p-4 bg-white border border-slate-300 text-xs font-black outline-none" onChange={(e) => setBankSettings({...bankSettings, cbu: e.target.value})} />
+                        <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Banco</label>
+                        <input type="text" value={bankSettings.bank} className="w-full p-4 bg-slate-50 border border-slate-200 text-xs font-black uppercase outline-none focus:bg-white transition-colors" onChange={(e) => setBankSettings({...bankSettings, bank: e.target.value})} />
                     </div>
-                </div>
-
-                <div className="space-y-2">
-                   <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Alias de Cuenta</label>
-                   <input type="text" value={bankSettings.alias} className="w-full p-4 bg-white border border-slate-300 text-xs font-black uppercase outline-none" onChange={(e) => setBankSettings({...bankSettings, alias: e.target.value})} />
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Alias</label>
+                        <input type="text" value={bankSettings.alias} className="w-full p-4 bg-slate-50 border border-slate-200 text-xs font-black uppercase outline-none focus:bg-white transition-colors" onChange={(e) => setBankSettings({...bankSettings, alias: e.target.value})} />
+                    </div>
+                    <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">CBU / CVU</label>
+                        <input type="text" value={bankSettings.cbu} className="w-full p-4 bg-slate-50 border border-slate-200 text-xs font-black uppercase outline-none focus:bg-white transition-colors" onChange={(e) => setBankSettings({...bankSettings, cbu: e.target.value})} />
+                    </div>
+                   </div>
                 </div>
 
                 <div className="pt-6">
                     <button 
                       onClick={handleSaveSettings}
-                      className="w-full bg-slate-900 text-white py-6 text-[10px] font-black uppercase tracking-[0.2em] hover:bg-blue-600 transition-all shadow-2xl shadow-slate-300 active:scale-[0.98]"
+                      className="w-full bg-slate-900 text-white py-6 text-[10px] font-black uppercase tracking-[0.2em] hover:bg-blue-600 transition-all shadow-2xl shadow-slate-300"
                     >
                       Sincronizar Ajustes Maestro
                     </button>

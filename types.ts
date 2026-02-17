@@ -34,10 +34,10 @@ export interface TravelHistoryItem {
 export interface SpaceBooking {
   id: string;
   spaceId: string;
+  spaceName: string; // Para mostrar sin buscar
   date: string;
-  userId: string;
-  userName: string;
-  status: 'CONFIRMED' | 'PENDING' | 'CANCELLED';
+  price: number;
+  status: 'CONFIRMED' | 'CANCELLED';
   cancellationReason?: string;
 }
 
@@ -45,7 +45,7 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  birthDate?: string; // Nuevo campo para cumpleaños
+  birthDate?: string; 
   role: 'USER' | 'ADMIN';
   status: UserStatus;
   verificationStatus: VerificationStatus;
@@ -54,7 +54,7 @@ export interface User {
     tier: MembershipTier;
     validUntil: string;
     usedThisMonth: number;
-    spaceBookingsThisMonth?: number; // Nuevo campo para controlar el límite de descuentos en espacios
+    spaceBookingsThisMonth?: number; 
     cancellationReason?: string;
   };
   tripsCount: number;
@@ -62,6 +62,7 @@ export interface User {
   isVerified: boolean;
   lastConnection: string;
   travelHistory?: TravelHistoryItem[];
+  spaceBookings?: SpaceBooking[]; // Nuevo Array para historial de espacios
   notifications?: Notification[];
 }
 
@@ -73,7 +74,7 @@ export interface BankSettings {
   alias: string;
   accountType: string;
   mpAccessToken?: string;
-  // Nuevos campos para links de suscripción automática
+  cancellationHours: number; // Nuevo: Configurable por Admin (Default 72)
   subscriptionLinks?: {
     [key in MembershipTier]?: string;
   };
@@ -111,7 +112,7 @@ export interface Space {
   rules: string[];
   damageDeposit: number;
   cleaningFee: number;
-  availability: string[]; // Lista de fechas ocupadas (YYYY-MM-DD)
+  availability: string[]; 
   images: string[];
 }
 

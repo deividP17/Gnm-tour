@@ -4,22 +4,16 @@ import { MEMBERSHIP_CONFIG } from '../constants';
 
 /**
  * Convierte un string "YYYY-MM-DD" a un objeto Date en hora LOCAL (00:00:00).
- * Soluciona el bug de "un día menos" al visualizar fechas.
  */
 export const getLocalDateFromISO = (dateStr: string) => {
   if (!dateStr) return new Date();
   const parts = dateStr.split('-');
-  // Aseguramos que se interprete como local: año, mes (0-idx), día
   const year = parseInt(parts[0], 10);
   const month = parseInt(parts[1], 10) - 1;
   const day = parseInt(parts[2], 10);
   return new Date(year, month, day);
 };
 
-/**
- * Convierte un objeto Date a string "YYYY-MM-DD" usando la hora LOCAL.
- * Evita que toISOString() cambie el día por UTC.
- */
 export const toLocalISOString = (date: Date) => {
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -37,31 +31,20 @@ export const calculateTourPrice = (tour: Tour, user: User | null): { finalPrice:
 
 export interface TourCostBreakdown {
   basePrice: number;
-  logisticsCost: number; // Valor definido manualmente
-  serviceFee: number; // Valor Boleto definido manualmente
+  logisticsCost: number;
+  serviceFee: number;
   discountAmount: number;
   finalServiceFee: number;
   finalTotal: number;
   isDiscountApplied: boolean;
   memberTier: MembershipTier;
   discountPercentage: number;
-  logisticsPercentage: number; // Para la barra visual
-  ticketPercentage: number; // Para la barra visual
-  reason?: string; // Explicación de si aplicó o no
+  logisticsPercentage: number;
+  ticketPercentage: number;
+  reason?: string;
 }
 
-/**
- * Nueva lógica con valores manuales.
- * LogisticsCost = tour.priceLogistics
- * ServiceFee (Ticket) = tour.priceTicket
- * 
- * LOGICA DE KM ACUMULABLES:
- * Se descuenta el % solo si (KM_USADOS + KM_TOUR) <= KM_LIMITE
- * Si el cliente realiza 3 viajes de 1500km (Total 4500) cumple tope.
- * El 4to viaje de 500km es NETO (sin descuento).
- */
 export const calculateTourCostBreakdown = (tour: Tour, user: User | null): TourCostBreakdown => {
-  // Usamos los valores definidos manualmente en el tour
   const logisticsCost = tour.priceLogistics !== undefined ? tour.priceLogistics : (tour.price * 0.8);
   const serviceFee = tour.priceTicket !== undefined ? tour.priceTicket : (tour.price * 0.2);
   
@@ -77,16 +60,12 @@ export const calculateTourCostBreakdown = (tour: Tour, user: User | null): TourC
     const config = MEMBERSHIP_CONFIG[user.membership.tier];
     memberTier = user.membership.tier;
     
-    // Obtener km usados este mes (simulado)
     const usedKm = user.membership.usedThisMonth || 0;
     const limit = config.kmLimit;
     const remainingKm = limit - usedKm;
 
-    // REGLA DE ORO: Si el viaje cabe en los KM restantes, aplica descuento.
-    // Si no cabe (ej. quedan 500km y el viaje es de 1000km), el viaje es NETO.
     if (tour.km <= remainingKm) {
       discountPercentage = config.discount;
-      // EL DESCUENTO SOLO APLICA AL VALOR DEL BOLETO/TICKET
       discountAmount = serviceFee * discountPercentage;
       isDiscountApplied = true;
       reason = `Cubierto por cupo mensual (${remainingKm} km disponibles)`;
@@ -100,7 +79,6 @@ export const calculateTourCostBreakdown = (tour: Tour, user: User | null): TourC
   const finalServiceFee = serviceFee - discountAmount;
   const finalTotal = logisticsCost + finalServiceFee;
 
-  // Calculo de porcentajes para la barra visual
   const totalBase = logisticsCost + serviceFee;
   const logisticsPercentage = totalBase > 0 ? (logisticsCost / totalBase) * 100 : 80;
   const ticketPercentage = totalBase > 0 ? (serviceFee / totalBase) * 100 : 20;
@@ -131,12 +109,6 @@ export interface SpaceCostBreakdown {
   remainingUses: number;
 }
 
-/**
- * Lógica para precios de Espacios (Quincho/Depto)
- * - Intermedio: 10% OFF (1 uso/mes)
- * - Plus: 15% OFF (2 usos/mes) + Decoración Básica
- * - Elite: 15% OFF (3 usos/mes) + Decoración Premium
- */
 export const calculateSpaceCostBreakdown = (space: Space, user: User | null): SpaceCostBreakdown => {
   const originalPrice = space.price;
   let finalPrice = originalPrice;
@@ -153,7 +125,6 @@ export const calculateSpaceCostBreakdown = (space: Space, user: User | null): Sp
 
     const usedCount = user.membership.spaceBookingsThisMonth || 0;
     
-    // Check if within limit
     if (usedCount < spaceConfig.limit) {
       if (spaceConfig.discount > 0) {
         discountAmount = originalPrice * spaceConfig.discount;
@@ -177,21 +148,34 @@ export const calculateSpaceCostBreakdown = (space: Space, user: User | null): Sp
   };
 };
 
-
 /**
- * Checks if a cancellation is within the 48hs window
+ * Calcula el monto a devolver basado en la política de cancelación.
+ * > límite de horas configurado = 100%
+ * <= límite de horas configurado = 50%
  */
-export const isCancellationRefundable = (startDate: string): boolean => {
-  // getLocalDateFromISO para comparar correctamente fechas sin horas
-  const start = getLocalDateFromISO(startDate).getTime();
-  const now = new Date().getTime();
-  const hoursDiff = (start - now) / (1000 * 60 * 60);
-  return hoursDiff >= 48;
+export const calculateRefundAmount = (dateStr: string, totalPaid: number, limitHours: number): { amount: number, percentage: number, message: string } => {
+    const tripDate = getLocalDateFromISO(dateStr);
+    const now = new Date();
+    
+    // Diferencia en horas
+    const diffMs = tripDate.getTime() - now.getTime();
+    const diffHours = diffMs / (1000 * 60 * 60);
+
+    if (diffHours > limitHours) {
+        return {
+            amount: totalPaid,
+            percentage: 100,
+            message: "Reembolso Completo (Cancelación anticipada)"
+        };
+    } else {
+        return {
+            amount: totalPaid * 0.5,
+            percentage: 50,
+            message: `Reembolso 50% (Cancelación dentro de las ${limitHours}hs previas)`
+        };
+    }
 };
 
-/**
- * Format currency to ARS
- */
 export const formatARS = (amount: number) => {
   return new Intl.NumberFormat('es-AR', {
     style: 'currency',

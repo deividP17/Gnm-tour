@@ -9,12 +9,17 @@ export const BANK_DETAILS = {
   alias: "GNM.TOUR.ARG",
   accountType: "Caja de Ahorro $",
   
+  // CONFIGURACIÓN ADMINISTRATIVA
+  cancellationHours: 72, // 3 Días por defecto para reembolso total
+  
   // --- ÁREA DE CONFIGURACIÓN DE PAGO ---
-  // 1. Pega aquí tu Access Token de Producción de Mercado Pago.
-  // Debe empezar con "APP_USR-..."
-  mpAccessToken: "", 
+  
+  // NOTA DE SEGURIDAD:
+  // El Access Token de Mercado Pago NO debe ir aquí.
+  // Para pagos de Tours/Espacios, se requiere el Backend (server.js) activo.
+  // Para Suscripciones, usa los links de abajo (esos sí son seguros en el frontend).
 
-  // 2. Pega aquí los links de pago ("init_point") generados en Mercado Pago 
+  // 1. Pega aquí los links de pago ("init_point") generados en Mercado Pago 
   // para las suscripciones mensuales de cada plan.
   subscriptionLinks: {
     [MembershipTier.BASICO]: "",     // Link para Plan Básico
@@ -59,7 +64,7 @@ export const MEMBERSHIP_CONFIG = {
   }
 };
 
-export const CANCELLATION_LIMIT_HOURS = 48;
+export const CANCELLATION_LIMIT_HOURS = 48; // Deprecated, use BANK_DETAILS.cancellationHours
 
 export const DEFAULT_LEGAL: any = {
   version: "01/01/2026",
@@ -74,7 +79,7 @@ export const DEFAULT_LEGAL: any = {
   terms: `
     TÉRMINOS Y CONDICIONES GNM TOUR
     1. RESERVAS: Las reservas de tours y espacios se confirman únicamente con el pago de la seña o el total.
-    2. CANCELACIONES: Las cancelaciones deben realizarse con 48hs de anticipación para reembolso o reprogramación.
+    2. CANCELACIONES: Las cancelaciones deben realizarse con la anticipación configurada para reembolso total.
     3. MEMBRESÍAS: Los beneficios de membresía son personales e intransferibles. El uso indebido puede causar la baja.
     4. ESPACIOS: El alquiler del quincho/salón requiere un depósito de garantía. El cliente es responsable por daños.
   `,

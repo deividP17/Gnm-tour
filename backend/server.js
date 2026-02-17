@@ -1,7 +1,7 @@
 
 require('dotenv').config();
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
+const mysql = require('mysql2/promise'); 
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
@@ -17,29 +17,27 @@ const BASE_URL = process.env.BASE_URL || 'http://localhost:3001';
 // Middleware de Seguridad
 app.use(helmet({
   contentSecurityPolicy: false,
+  crossOriginResourcePolicy: false,
 }));
 app.use(cors());
-app.use(express.json({ limit: '10mb' })); // Limitado a 10mb para evitar DoS por payload
-app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// --- RATE LIMITER (Protección Fuerza Bruta en Memoria) ---
+// AUMENTO DE LÍMITE PARA IMÁGENES
+// Nota: MySQL también necesita 'max_allowed_packet' alto en my.ini/my.cnf si usas base64 largos.
+app.use(express.json({ limit: '50mb' })); 
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// --- RATE LIMITER SIMPLE ---
 const loginAttempts = new Map();
-const RATE_LIMIT_WINDOW = 15 * 60 * 1000; // 15 minutos
-const MAX_ATTEMPTS = 10;
-
 const rateLimiter = (req, res, next) => {
     const ip = req.ip;
     const now = Date.now();
-    
     if (loginAttempts.has(ip)) {
         const data = loginAttempts.get(ip);
-        if (now - data.firstAttempt > RATE_LIMIT_WINDOW) {
+        if (now - data.firstAttempt > 15 * 60 * 1000) {
             loginAttempts.set(ip, { count: 1, firstAttempt: now });
         } else {
             data.count++;
-            if (data.count > MAX_ATTEMPTS) {
-                return res.status(429).json({ error: "Demasiados intentos. Intente más tarde." });
-            }
+            if (data.count > 20) return res.status(429).json({ error: "Demasiados intentos." });
         }
     } else {
         loginAttempts.set(ip, { count: 1, firstAttempt: now });
@@ -47,57 +45,154 @@ const rateLimiter = (req, res, next) => {
     next();
 };
 
-// --- BASE DE DATOS SQLITE ---
-const db = new sqlite3.Database('./gnm_database.sqlite', (err) => {
-  if (err) console.error('Error al conectar con BD:', err.message);
-  else console.log('Conectado a la base de datos SQLite segura.');
+// --- CONEXIÓN MYSQL (POOL) ---
+const pool = mysql.createPool({
+    host: process.env.DB_HOST || 'localhost',
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASS || '',
+    database: process.env.DB_NAME || 'gnm_tour_db',
+    port: process.env.DB_PORT || 3306,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+    // Importante para mantener la conexión viva en Hostinger
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 0
 });
 
-// Inicializar Tablas
-db.serialize(() => {
-  db.run(`CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY, name TEXT, email TEXT UNIQUE, password_hash TEXT, role TEXT DEFAULT 'USER',
-    status TEXT DEFAULT 'ACTIVE', credits INTEGER DEFAULT 0, tripsCount INTEGER DEFAULT 0,
-    membership_tier TEXT DEFAULT 'NONE', membership_validUntil TEXT, membership_usedThisMonth INTEGER DEFAULT 0
-  )`);
+// --- INICIALIZACIÓN DE TABLAS ---
+const initDB = async () => {
+    try {
+        const connection = await pool.getConnection();
+        console.log('✅ Conectado a MySQL exitosamente.');
 
-  db.run(`CREATE TABLE IF NOT EXISTS tours (
-    id TEXT PRIMARY KEY, destination TEXT, price INTEGER, km INTEGER, description TEXT,
-    dates_start TEXT, capacity INTEGER, data_json TEXT
-  )`);
+        // Users
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id VARCHAR(50) PRIMARY KEY,
+                name VARCHAR(100),
+                email VARCHAR(100) UNIQUE,
+                password_hash VARCHAR(255),
+                role VARCHAR(20) DEFAULT 'USER',
+                status VARCHAR(20) DEFAULT 'ACTIVE',
+                credits INT DEFAULT 0,
+                tripsCount INT DEFAULT 0,
+                membership_tier VARCHAR(50) DEFAULT 'NONE',
+                membership_validUntil VARCHAR(50),
+                membership_usedThisMonth INT DEFAULT 0
+            )
+        `);
 
-  db.run(`CREATE TABLE IF NOT EXISTS spaces (
-    id TEXT PRIMARY KEY, name TEXT, type TEXT, price INTEGER, capacity INTEGER, description TEXT, data_json TEXT
-  )`);
+        // Tours
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS tours (
+                id VARCHAR(50) PRIMARY KEY,
+                destination VARCHAR(255),
+                price INT,
+                km INT,
+                description TEXT,
+                dates_start VARCHAR(50),
+                capacity INT,
+                data_json LONGTEXT
+            )
+        `);
 
-  db.run(`CREATE TABLE IF NOT EXISTS payments (
-    id TEXT PRIMARY KEY, mp_payment_id TEXT, user_id TEXT, item_type TEXT, item_id TEXT,
-    amount INTEGER, status TEXT, date_created TEXT
-  )`);
+        // Spaces
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS spaces (
+                id VARCHAR(50) PRIMARY KEY,
+                name VARCHAR(255),
+                type VARCHAR(50),
+                price INT,
+                capacity INT,
+                description TEXT,
+                data_json LONGTEXT
+            )
+        `);
 
-  db.run(`CREATE TABLE IF NOT EXISTS settings (
-    id TEXT PRIMARY KEY, owner TEXT, cuit TEXT, bank TEXT, cbu TEXT, alias TEXT, mp_access_token TEXT
-  )`);
+        // Payments
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS payments (
+                id VARCHAR(50) PRIMARY KEY,
+                mp_payment_id VARCHAR(50),
+                user_id VARCHAR(50),
+                item_type VARCHAR(50),
+                item_id VARCHAR(50),
+                amount INT,
+                status VARCHAR(50),
+                date_created VARCHAR(50)
+            )
+        `);
 
-  db.get("SELECT id FROM settings WHERE id = 'config_v1'", (err, row) => {
-    if (!row) {
-        db.run(`INSERT INTO settings (id, owner, cuit, bank, cbu, alias, mp_access_token)
-                VALUES ('config_v1', 'GERARDO RAMON LAFUENTE', '20-37327496-7', 'Banco de Corrientes', '0940001000123456789012', 'GNM.TOUR.ARG', '')`);
+        // Settings
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS settings (
+                id VARCHAR(50) PRIMARY KEY,
+                owner VARCHAR(100),
+                cuit VARCHAR(50),
+                bank VARCHAR(100),
+                cbu VARCHAR(100),
+                alias VARCHAR(100),
+                mp_access_token VARCHAR(255),
+                cancellation_hours INT DEFAULT 72,
+                subscription_links_json TEXT
+            )
+        `);
+
+        // Assets
+        // CAMBIO IMPORTANTE: 'key' es reservada en MySQL, usamos 'asset_key'
+        await connection.query(`
+            CREATE TABLE IF NOT EXISTS assets (
+                id VARCHAR(50) PRIMARY KEY,
+                asset_key VARCHAR(100) UNIQUE, 
+                label VARCHAR(100),
+                url LONGTEXT,
+                category VARCHAR(50)
+            )
+        `);
+
+        // --- SEEDING ---
+
+        // Configuración Inicial
+        const [settingsRows] = await connection.query("SELECT id FROM settings WHERE id = 'config_v1'");
+        if (settingsRows.length === 0) {
+            await connection.query(`
+                INSERT INTO settings (id, owner, cuit, bank, cbu, alias, mp_access_token, cancellation_hours, subscription_links_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `, ['config_v1', 'GERARDO RAMON LAFUENTE', '20-37327496-7', 'Banco de Corrientes', '0940001000123456789012', 'GNM.TOUR.ARG', '', 72, '{}']);
+            console.log('⚙️ Settings iniciales creados.');
+        }
+
+        // Usuario Admin
+        const [userRows] = await connection.query("SELECT id FROM users WHERE email = ?", ['gerardolaf71@gmail.com']);
+        if (userRows.length === 0) {
+            const hash = await bcrypt.hash('admin123', 10);
+            await connection.query(`
+                INSERT INTO users (id, name, email, password_hash, role, membership_tier) 
+                VALUES (?, ?, ?, ?, ?, ?)
+            `, ['u-admin-master', 'Gerardo Admin', 'gerardolaf71@gmail.com', hash, 'ADMIN', 'ELITE']);
+            console.log('👤 Usuario Admin creado.');
+        }
+
+        // Assets Iniciales
+        const [assetRows] = await connection.query("SELECT COUNT(*) as count FROM assets");
+        if (assetRows[0].count === 0) {
+            console.log("🖼️ Inicializando imágenes por defecto...");
+            const insertAsset = "INSERT INTO assets (id, asset_key, label, url, category) VALUES (?, ?, ?, ?, ?)";
+            await connection.query(insertAsset, ['a1', 'home_hero', 'Imagen Principal (Hero)', 'https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&q=80&w=2000', 'HERO']);
+            await connection.query(insertAsset, ['a2', 'salon_main', 'Salón Niño Jesús Principal', 'https://images.unsplash.com/photo-1530103862676-de3c9a59af57?auto=format&fit=crop&q=80&w=1200', 'GALLERY']);
+            await connection.query(insertAsset, ['a3', 'quincho_ext', 'Exterior Quincho', 'https://images.unsplash.com/photo-1519167758481-83f550bb49b3?auto=format&fit=crop&q=80&w=1200', 'GALLERY']);
+        }
+
+        connection.release();
+    } catch (error) {
+        console.error('❌ Error fatal al inicializar MySQL:', error);
     }
-  });
-  
-  const adminId = 'u-admin-master';
-  db.get("SELECT id FROM users WHERE email = ?", ['gerardolaf71@gmail.com'], async (err, row) => {
-      if (!row) {
-          const hash = await bcrypt.hash('admin123', 10);
-          db.run(`INSERT INTO users (id, name, email, password_hash, role, membership_tier) 
-                  VALUES (?, ?, ?, ?, ?, ?)`, 
-                  [adminId, 'Gerardo Admin', 'gerardolaf71@gmail.com', hash, 'ADMIN', 'ELITE']);
-          console.log('Usuario Admin creado: gerardolaf71@gmail.com / admin123');
-      }
-  });
-});
+};
 
+initDB();
+
+// --- HELPERS Y MIDDLEWARES ---
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -109,45 +204,37 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-const getAccessToken = () => {
-    return new Promise((resolve) => {
-        if (process.env.MP_ACCESS_TOKEN && process.env.MP_ACCESS_TOKEN.trim() !== '') {
-            return resolve(process.env.MP_ACCESS_TOKEN);
-        }
-        db.get("SELECT mp_access_token FROM settings WHERE id = 'config_v1'", (err, row) => {
-            if (err || !row) resolve(null);
-            else resolve(row.mp_access_token);
-        });
-    });
+const getAccessToken = async () => {
+    if (process.env.MP_ACCESS_TOKEN && process.env.MP_ACCESS_TOKEN.trim() !== '') {
+        return process.env.MP_ACCESS_TOKEN;
+    }
+    const [rows] = await pool.query("SELECT mp_access_token FROM settings WHERE id = 'config_v1'");
+    return rows.length > 0 ? rows[0].mp_access_token : null;
 };
 
-// --- VALIDACIONES HELPERS ---
-const isValidEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-const isValidPrice = (price) => typeof price === 'number' && price >= 0;
+// --- ENDPOINT HEALTH CHECK (Hostinger) ---
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'OK', timestamp: new Date() });
+});
 
 // --- RUTAS MERCADO PAGO ---
 app.post('/api/mercadopago/create_preference', async (req, res) => {
     const { title, price, payer_email, userId, type, itemId } = req.body;
-    
-    // Validación Backend MP
-    if (!title || !isValidPrice(price) || !payer_email) {
-        return res.status(400).json({ error: "Datos de pago inválidos" });
-    }
+    if (!title || price <= 0 || !payer_email) return res.status(400).json({ error: "Datos inválidos" });
 
     try {
         const accessToken = await getAccessToken();
-        if (!accessToken) return res.status(400).json({ error: "Mercado Pago no configurado" });
+        if (!accessToken) return res.status(400).json({ error: "Falta Access Token MP" });
 
         const client = new MercadoPagoConfig({ accessToken });
         const preference = new Preference(client);
-        const metadata = { user_id: userId, type: type, item_id: itemId };
-
+        
         const result = await preference.create({
             body: {
                 items: [{ title, quantity: 1, unit_price: Number(price), currency_id: 'ARS' }],
                 payer: { email: payer_email },
                 notification_url: `${BASE_URL}/api/mercadopago/webhook`, 
-                external_reference: JSON.stringify(metadata), 
+                external_reference: JSON.stringify({ user_id: userId, type, item_id: itemId }), 
                 back_urls: { success: `${BASE_URL}/`, failure: `${BASE_URL}/`, pending: `${BASE_URL}/` },
                 auto_return: "approved",
             }
@@ -176,133 +263,194 @@ app.post('/api/mercadopago/webhook', async (req, res) => {
                 const metadata = JSON.parse(paymentData.external_reference || '{}');
                 const { user_id, type, item_id } = metadata;
 
-                // Verificar duplicados para no procesar el mismo pago dos veces
-                db.get("SELECT id FROM payments WHERE mp_payment_id = ?", [id], (err, row) => {
-                    if (!row) {
-                        db.run(`INSERT OR IGNORE INTO payments (id, mp_payment_id, user_id, item_type, item_id, amount, status, date_created) 
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                                [`pay-${Date.now()}`, id, user_id, type, item_id, paymentData.transaction_amount, 'approved', new Date().toISOString()]
-                        );
+                // Insert Ignore para idempotencia
+                await pool.query(`
+                    INSERT IGNORE INTO payments (id, mp_payment_id, user_id, item_type, item_id, amount, status, date_created) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                `, [`pay-${Date.now()}`, id, user_id, type, item_id, paymentData.transaction_amount, 'approved', new Date().toISOString()]);
 
-                        if (type === 'MEMBERSHIP') {
-                            const validUntil = new Date();
-                            validUntil.setFullYear(validUntil.getFullYear() + 1); // Lógica base, idealmente vendría de metadata
-                            db.run(`UPDATE users SET membership_tier = ?, membership_validUntil = ? WHERE id = ?`,
-                                [item_id, validUntil.toISOString(), user_id]);
-                        } else if (type === 'TOUR') {
-                            db.run(`UPDATE users SET tripsCount = tripsCount + 1, credits = credits + ? WHERE id = ?`,
-                                    [Math.floor(paymentData.transaction_amount / 100), user_id]);
-                        }
-                    }
-                });
+                if (type === 'MEMBERSHIP') {
+                    const validUntil = new Date();
+                    validUntil.setFullYear(validUntil.getFullYear() + 1); 
+                    await pool.query(`UPDATE users SET membership_tier = ?, membership_validUntil = ? WHERE id = ?`,
+                        [item_id, validUntil.toISOString(), user_id]);
+                } else if (type === 'TOUR') {
+                    await pool.query(`UPDATE users SET tripsCount = tripsCount + 1 WHERE id = ?`, [user_id]);
+                }
             }
-        } catch (error) { console.error("Error procesando webhook:", error); }
+        } catch (error) { console.error("Webhook Error:", error); }
     }
     res.sendStatus(200);
 });
 
-// --- RUTAS API ESTÁNDAR ---
-app.get('/api/settings', authenticateToken, (req, res) => {
-    db.get("SELECT * FROM settings WHERE id = 'config_v1'", (err, row) => {
-        if (err || !row) return res.status(500).json({});
-        const { mp_access_token, ...publicData } = row;
-        res.json(publicData);
-    });
+// --- API ROUTES ---
+
+// Settings
+app.get('/api/settings', authenticateToken, async (req, res) => {
+    try {
+        const [rows] = await pool.query("SELECT * FROM settings WHERE id = 'config_v1'");
+        if (rows.length === 0) return res.json({});
+        const row = rows[0];
+        // Parsear JSON almacenado
+        const subscriptionLinks = row.subscription_links_json ? JSON.parse(row.subscription_links_json) : {};
+        // Ocultar token
+        const { mp_access_token, subscription_links_json, ...publicData } = row;
+        res.json({ 
+            ...publicData, 
+            cancellationHours: row.cancellation_hours || 72,
+            subscriptionLinks 
+        });
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.put('/api/settings', authenticateToken, (req, res) => {
+app.put('/api/settings', authenticateToken, async (req, res) => {
     if (req.user.role !== 'ADMIN') return res.sendStatus(403);
-    const { owner, cuit, bank, cbu, alias, mpAccessToken } = req.body;
-    db.run(`UPDATE settings SET owner = ?, cuit = ?, bank = ?, cbu = ?, alias = ?, mp_access_token = ? WHERE id = 'config_v1'`,
-        [owner, cuit, bank, cbu, alias, mpAccessToken],
-        (err) => { if (err) return res.status(500).json({ error: err.message }); res.json({ message: "Configuración actualizada" }); }
-    );
+    const { owner, cuit, bank, cbu, alias, mpAccessToken, cancellationHours, subscriptionLinks } = req.body;
+    try {
+        await pool.query(`
+            UPDATE settings SET owner=?, cuit=?, bank=?, cbu=?, alias=?, mp_access_token=?, cancellation_hours=?, subscription_links_json=? WHERE id='config_v1'
+        `, [owner, cuit, bank, cbu, alias, mpAccessToken, cancellationHours, JSON.stringify(subscriptionLinks || {})]);
+        res.json({ message: "OK" });
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/auth/login', rateLimiter, (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: "Datos incompletos" });
+// Assets (Imágenes)
+app.get('/api/assets', async (req, res) => {
+    try {
+        // Mapeamos 'asset_key' a 'key' para que el frontend no se rompa
+        const [rows] = await pool.query("SELECT id, asset_key as `key`, label, url, category FROM assets");
+        res.json(rows);
+    } catch (e) { res.status(500).json([]); }
+});
 
-  db.get("SELECT * FROM users WHERE email = ?", [email], async (err, user) => {
-    if (err || !user) return res.status(400).json({ error: "Credenciales inválidas" });
-    const validPassword = await bcrypt.compare(password, user.password_hash);
-    if (!validPassword) return res.status(401).json({ error: "Credenciales inválidas" });
-    
-    const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, SECRET_KEY, { expiresIn: '24h' });
-    const userData = { ...user, password_hash: undefined, membership: { tier: user.membership_tier, validUntil: user.membership_validUntil, usedThisMonth: user.membership_usedThisMonth }};
-    res.json({ user: userData, token });
-  });
+app.put('/api/assets/:id', authenticateToken, async (req, res) => {
+    if (req.user.role !== 'ADMIN') return res.sendStatus(403);
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: "No URL" });
+
+    try {
+        const [result] = await pool.query("UPDATE assets SET url = ? WHERE id = ?", [url, req.params.id]);
+        if (result.affectedRows === 0) return res.status(404).json({ error: "No encontrado" });
+        res.json({ message: "Actualizado" });
+    } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Auth
+app.post('/api/auth/login', rateLimiter, async (req, res) => {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: "Datos incompletos" });
+
+    try {
+        const [rows] = await pool.query("SELECT * FROM users WHERE email = ?", [email]);
+        const user = rows[0];
+        if (!user) return res.status(400).json({ error: "Credenciales inválidas" });
+
+        const valid = await bcrypt.compare(password, user.password_hash);
+        if (!valid) return res.status(401).json({ error: "Credenciales inválidas" });
+
+        const token = jwt.sign({ id: user.id, email: user.email, role: user.role }, SECRET_KEY, { expiresIn: '24h' });
+        // Construir objeto user seguro
+        const userSafe = { ...user, password_hash: undefined, membership: { tier: user.membership_tier, validUntil: user.membership_validUntil, usedThisMonth: user.membership_usedThisMonth }};
+        res.json({ user: userSafe, token });
+    } catch (e) { res.status(500).json({ error: "Server Error" }); }
 });
 
 app.post('/api/auth/register', rateLimiter, async (req, res) => {
-  const { name, email, password } = req.body;
-  
-  // Validaciones
-  if (!name || name.length < 3) return res.status(400).json({ error: "Nombre muy corto" });
-  if (!isValidEmail(email)) return res.status(400).json({ error: "Email inválido" });
-  if (!password || password.length < 6) return res.status(400).json({ error: "La contraseña debe tener al menos 6 caracteres" });
+    const { name, email, password } = req.body;
+    if (!name || !email || password.length < 6) return res.status(400).json({ error: "Datos inválidos" });
 
-  const id = `u-${Date.now()}`;
-  try {
-    const hashedPassword = await bcrypt.hash(password, 10);
-    db.run(`INSERT INTO users (id, name, email, password_hash) VALUES (?, ?, ?, ?)`, 
-      [id, name, email, hashedPassword], 
-      (err) => {
-        if (err) return res.status(400).json({ error: "El email ya está registrado" });
-        res.status(201).json({ message: "Usuario creado", userId: id });
-    });
-  } catch (e) { res.status(500).json({ error: "Error servidor" }); }
+    const id = `u-${Date.now()}`;
+    try {
+        const hash = await bcrypt.hash(password, 10);
+        await pool.query(`INSERT INTO users (id, name, email, password_hash) VALUES (?, ?, ?, ?)`, [id, name, email, hash]);
+        res.status(201).json({ message: "Creado", userId: id });
+    } catch (e) {
+        if (e.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: "Email ya registrado" });
+        res.status(500).json({ error: "Error interno" });
+    }
 });
 
-app.get('/api/users', authenticateToken, (req, res) => {
+// Users (Admin Only)
+app.get('/api/users', authenticateToken, async (req, res) => {
     if (req.user.role !== 'ADMIN') return res.sendStatus(403);
-    db.all("SELECT * FROM users", [], (err, rows) => res.json(rows.map(u => ({ ...u, password_hash: undefined }))));
+    try {
+        const [rows] = await pool.query("SELECT * FROM users");
+        // Convertir campos planos a objetos para el frontend
+        const users = rows.map(u => ({
+            ...u,
+            password_hash: undefined,
+            membership: {
+                tier: u.membership_tier,
+                validUntil: u.membership_validUntil,
+                usedThisMonth: u.membership_usedThisMonth
+            }
+        }));
+        res.json(users);
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/api/tours', (req, res) => {
-    db.all("SELECT * FROM tours", [], (err, rows) => res.json(rows.map(t => ({ ...t, ...JSON.parse(t.data_json || '{}') }))));
+// Tours
+app.get('/api/tours', async (req, res) => {
+    try {
+        const [rows] = await pool.query("SELECT * FROM tours");
+        res.json(rows.map(t => ({ ...t, ...JSON.parse(t.data_json || '{}') })));
+    } catch (e) { res.status(500).json([]); }
 });
 
-app.post('/api/tours', authenticateToken, (req, res) => {
+app.post('/api/tours', authenticateToken, async (req, res) => {
     if (req.user.role !== 'ADMIN') return res.sendStatus(403);
     const t = req.body;
+    const dataJson = JSON.stringify({ images: t.images, dates: t.dates, itinerary: t.itinerary, status: t.status });
     
-    // Validación de Tour
-    if (!t.destination || !t.price || t.price < 0 || !t.dates?.start) {
-        return res.status(400).json({ error: "Datos del tour inválidos o incompletos" });
-    }
-
-    db.run(`INSERT OR REPLACE INTO tours (id, destination, price, km, description, dates_start, capacity, data_json) VALUES (?,?,?,?,?,?,?,?)`,
-            [t.id, t.destination, t.price, t.km, t.description, t.dates.start, t.capacity, JSON.stringify({ images: t.images, dates: t.dates, itinerary: t.itinerary, status: t.status })],
-            (err) => { if (err) return res.status(500).json({error: err.message}); res.json({message: "OK"}); });
+    try {
+        await pool.query(`
+            INSERT INTO tours (id, destination, price, km, description, dates_start, capacity, data_json) 
+            VALUES (?,?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE 
+            destination=VALUES(destination), price=VALUES(price), km=VALUES(km), description=VALUES(description),
+            dates_start=VALUES(dates_start), capacity=VALUES(capacity), data_json=VALUES(data_json)
+        `, [t.id, t.destination, t.price, t.km, t.description, t.dates.start, t.capacity, dataJson]);
+        res.json({ message: "OK" });
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.delete('/api/tours/:id', authenticateToken, (req, res) => {
+app.delete('/api/tours/:id', authenticateToken, async (req, res) => {
     if (req.user.role !== 'ADMIN') return res.sendStatus(403);
-    db.run("DELETE FROM tours WHERE id = ?", [req.params.id], (err) => res.json({message: "Eliminado"}));
+    try {
+        await pool.query("DELETE FROM tours WHERE id = ?", [req.params.id]);
+        res.json({ message: "Deleted" });
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/api/spaces', (req, res) => {
-    db.all("SELECT * FROM spaces", [], (err, rows) => res.json(rows.map(s => ({ ...s, ...JSON.parse(s.data_json || '{}') }))));
+// Spaces
+app.get('/api/spaces', async (req, res) => {
+    try {
+        const [rows] = await pool.query("SELECT * FROM spaces");
+        res.json(rows.map(s => ({ ...s, ...JSON.parse(s.data_json || '{}') })));
+    } catch (e) { res.status(500).json([]); }
 });
 
-app.post('/api/spaces', authenticateToken, (req, res) => {
+app.post('/api/spaces', authenticateToken, async (req, res) => {
     if (req.user.role !== 'ADMIN') return res.sendStatus(403);
     const s = req.body;
+    const dataJson = JSON.stringify({ images: s.images, rules: s.rules, availability: s.availability, damageDeposit: s.damageDeposit, cleaningFee: s.cleaningFee });
 
-    // Validación de Espacio
-    if (!s.name || !s.price || s.price < 0 || s.capacity < 1) {
-        return res.status(400).json({ error: "Datos del espacio inválidos" });
-    }
-
-    db.run(`INSERT OR REPLACE INTO spaces (id, name, type, price, capacity, description, data_json) VALUES (?,?,?,?,?,?,?)`,
-            [s.id, s.name, s.type, s.price, s.capacity, s.description, JSON.stringify({ images: s.images, rules: s.rules, availability: s.availability, damageDeposit: s.damageDeposit, cleaningFee: s.cleaningFee })],
-            (err) => { if (err) return res.status(500).json({error: err.message}); res.json({message: "OK"}); });
+    try {
+        await pool.query(`
+            INSERT INTO spaces (id, name, type, price, capacity, description, data_json) 
+            VALUES (?,?,?,?,?,?,?) ON DUPLICATE KEY UPDATE
+            name=VALUES(name), type=VALUES(type), price=VALUES(price), capacity=VALUES(capacity),
+            description=VALUES(description), data_json=VALUES(data_json)
+        `, [s.id, s.name, s.type, s.price, s.capacity, s.description, dataJson]);
+        res.json({ message: "OK" });
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.delete('/api/spaces/:id', authenticateToken, (req, res) => {
+app.delete('/api/spaces/:id', authenticateToken, async (req, res) => {
     if (req.user.role !== 'ADMIN') return res.sendStatus(403);
-    db.run("DELETE FROM spaces WHERE id = ?", [req.params.id], (err) => res.json({message: "Eliminado"}));
+    try {
+        await pool.query("DELETE FROM spaces WHERE id = ?", [req.params.id]);
+        res.json({ message: "Deleted" });
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // --- SERVIR FRONTEND ---
@@ -319,10 +467,10 @@ app.get('*', (req, res) => {
   } else if (require('fs').existsSync(buildIndex)) {
     res.sendFile(buildIndex);
   } else {
-    res.status(200).send(`GNM Backend Activo. Construye el frontend para ver la app.`);
+    res.status(200).send(`GNM Backend Activo. Verifique ./dist o ./build`);
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`Servidor GNM seguro corriendo en http://localhost:${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });

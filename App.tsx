@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, MembershipTier, Tour, Space, SiteAsset, TravelHistoryItem, Notification } from './types';
+import { User, MembershipTier, Tour, Space, SiteAsset, TravelHistoryItem, Notification, SpaceBooking } from './types';
 import { MEMBERSHIP_CONFIG as INITIAL_MEMBERSHIP_CONFIG } from './constants';
 import { formatARS } from './services/logic';
 import { GNM_API } from './services/api';
@@ -30,7 +30,6 @@ const App: React.FC = () => {
 
   const [membershipConfig, setMembershipConfig] = useState(INITIAL_MEMBERSHIP_CONFIG);
   
-  // Estado del contenido del Home incluyendo el Collage
   const [homeContent, setHomeContent] = useState({
     heroSubtitle: 'Explora Argentina con GNM',
     heroTitle: 'Tours Grupales & Espacios Premium',
@@ -49,18 +48,24 @@ const App: React.FC = () => {
     }
   });
 
+  const loadAssets = async () => {
+    const fetchedAssets = await GNM_API.assets.getAll();
+    setAssets(fetchedAssets);
+  };
+
   useEffect(() => {
     const initApp = async () => {
       setIsLoading(true);
       try {
-        const [fetchedTours, fetchedSpaces, fetchedAssets] = await Promise.all([
+        const [fetchedTours, fetchedSpaces] = await Promise.all([
           GNM_API.tours.getAll(),
           GNM_API.spaces.getAll(),
-          GNM_API.assets.getAll()
         ]);
+        await loadAssets(); // Cargar Assets
+        
         setTours(fetchedTours);
         setSpaces(fetchedSpaces);
-        setAssets(fetchedAssets);
+        
         const savedUser = localStorage.getItem('gnm_user');
         if (savedUser) {
            const parsedUser = JSON.parse(savedUser);
@@ -87,17 +92,12 @@ const App: React.FC = () => {
       const today = new Date();
       const birth = new Date(userData.birthDate);
       
-      // La comparación básica de día y mes (se ignora zona horaria para simplificar demo)
-      // Ajustamos 'birth' para que coincida con el año actual si fuera necesario comparar
-      if (today.getDate() === birth.getDate() + 1 && today.getMonth() === birth.getMonth()) { // +1 por issue de timezone en lectura directa a veces, o usamos getUTCDate
-         // Para mayor precisión, mejor usar strings
+      if (today.getDate() === birth.getDate() + 1 && today.getMonth() === birth.getMonth()) {
          const tStr = `${today.getMonth()+1}-${today.getDate()}`;
-         const bStr = `${birth.getMonth()+1}-${birth.getDate()+1}`; // Ajuste por parseo ISO
+         const bStr = `${birth.getMonth()+1}-${birth.getDate()+1}`;
          
-         // Verificamos si ya se envió hoy (usando sessionStorage)
          const sentKey = `gnm_bday_sent_${userData.id}_${today.getFullYear()}`;
          if (!sessionStorage.getItem(sentKey)) {
-             // Es su cumple!
              EmailService.sendEmail(
                  userData.email,
                  "¡Feliz Cumpleaños te desea GNM TOUR! 🎉",
@@ -132,12 +132,24 @@ const App: React.FC = () => {
     const space = spaces.find(s => s.id === spaceId);
     if (!space || !user) return;
     
+    // 1. Crear Objeto de Reserva
+    const newBooking: SpaceBooking = {
+      id: `sb-${Date.now()}`,
+      spaceId: space.id,
+      spaceName: space.name,
+      date: date,
+      price: finalPrice,
+      status: 'CONFIRMED'
+    };
+
+    // 2. Actualizar Disponibilidad del Espacio
     const updatedSpaces = spaces.map(s => s.id === spaceId ? { ...s, availability: [...(s.availability || []), date] } : s);
     setSpaces(updatedSpaces);
     
+    // 3. Notificación
     const notif = EmailService.createNotification(user, 'SPACE_BOOKING', `Reserva Confirmada: ${space.name}`, `Tu reserva para el día ${date} ha sido procesada exitosamente. Total abonado: ${formatARS(finalPrice)}`);
     
-    // Incrementar contador de usos de espacio si tiene membresía
+    // 4. Actualizar Usuario (Membresía + Historial + Notificaciones)
     let updatedMembership = user.membership;
     if (updatedMembership) {
         updatedMembership = {
@@ -146,7 +158,13 @@ const App: React.FC = () => {
         };
     }
 
-    const updatedUser = { ...user, membership: updatedMembership, notifications: [notif, ...(user.notifications || [])] };
+    const updatedUser = { 
+        ...user, 
+        membership: updatedMembership, 
+        notifications: [notif, ...(user.notifications || [])],
+        spaceBookings: [newBooking, ...(user.spaceBookings || [])] // Guardamos historial
+    };
+    
     handleUserUpdate(updatedUser);
     handleNavigate('profile');
   };
@@ -193,7 +211,6 @@ const App: React.FC = () => {
     localStorage.setItem('gnm_user', JSON.stringify(updatedUser));
   };
 
-  // --- COLLAGE HANDLERS ---
   const handleCollageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const reader = new FileReader();
@@ -215,7 +232,6 @@ const App: React.FC = () => {
       collageImages: prev.collageImages.filter((_, i) => i !== index)
     }));
   };
-  // ------------------------
 
   const handleSubscribeClick = (tier: MembershipTier) => {
       if (!user) {
@@ -233,29 +249,25 @@ const App: React.FC = () => {
   const handleBookTour = (t: Tour) => {
     if (!user) return;
     
-    // 1. Crear el registro del viaje
     const newTrip: TravelHistoryItem = {
       id: `th-${Date.now()}`,
       tourId: t.id,
       destination: t.destination,
-      date: t.dates.start, // Fecha fija definida por admin
-      pax: 1, // Por ahora simple, idealmente vendría del modal
+      date: t.dates.start,
+      pax: 1, 
       totalPaid: t.price,
       status: 'CONFIRMED',
-      km: t.km // GUARDAMOS EL VALOR DE KM PARA FUTURAS CANCELACIONES
+      km: t.km 
     };
 
-    // 2. Descontar KMs si aplica (Lógica de Membresía)
     let updatedMembership = user.membership;
     if (updatedMembership) {
-      // Sumar al acumulado del mes
       updatedMembership = {
         ...updatedMembership,
         usedThisMonth: (updatedMembership.usedThisMonth || 0) + t.km
       };
     }
 
-    // 3. Notificación
     const notif = EmailService.createNotification(user, 'BOOKING', `Viaje Confirmado: ${t.destination}`, `Te esperamos el ${t.dates.start}. Se han acumulado/descontado ${t.km} KM de tu membresía.`);
 
     handleUserUpdate({
@@ -288,7 +300,12 @@ const App: React.FC = () => {
       {currentView === 'home' && (
         <div className="space-y-0 pb-24">
           <section className="relative h-[85vh] flex items-center justify-center overflow-hidden bg-slate-900">
-             <img src={assets.find(a => a.key === 'home_hero')?.url} className="absolute inset-0 w-full h-full object-cover opacity-50" alt="Argentina" />
+             {/* IMAGEN HERO DINÁMICA CONECTADA AL BACKEND */}
+             <img 
+                src={assets.find(a => a.key === 'home_hero')?.url || 'https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&q=80&w=2000'} 
+                className="absolute inset-0 w-full h-full object-cover opacity-50 transition-opacity duration-1000" 
+                alt="Argentina" 
+             />
              <div className="relative container text-center text-white space-y-8 px-4">
                 {isEditMode ? (
                   <input 
@@ -317,7 +334,6 @@ const App: React.FC = () => {
              </div>
           </section>
 
-          {/* NUEVA SECCIÓN: COLLAGE DE VIAJES */}
           <section className="bg-white py-20 border-b border-slate-200">
              <div className="container px-4">
                 <div className="text-center mb-12">
@@ -515,12 +531,18 @@ const App: React.FC = () => {
       )}
 
       {currentView === 'admin' && user?.role === 'ADMIN' && (
-        <AdminDashboard tours={tours} spaces={spaces} onAddTour={() => {}} onDeleteTour={() => {}} onUpdateSpace={handleUpdateSpace} />
+        <AdminDashboard 
+          tours={tours} 
+          spaces={spaces} 
+          onAddTour={() => {}} 
+          onDeleteTour={() => {}} 
+          onUpdateSpace={handleUpdateSpace} 
+          onRefreshAssets={loadAssets} // PASAMOS LA FUNCIÓN DE RECARGA
+        />
       )}
 
       {pendingTier && <PaymentModal tier={pendingTier} onSuccess={(t, months) => { 
         if(user) {
-          // Calcular nueva fecha de vencimiento
           const now = new Date();
           now.setMonth(now.getMonth() + months);
           const validUntil = now.toISOString().split('T')[0];

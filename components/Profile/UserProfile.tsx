@@ -1,13 +1,14 @@
 
-import React, { useState } from 'react';
-import { User, MembershipTier, VerificationStatus, Notification, TravelHistoryItem, Tour } from '../../types';
+import React, { useState, useEffect } from 'react';
+import { User, MembershipTier, VerificationStatus, Notification, TravelHistoryItem, Tour, BankSettings } from '../../types';
 import { MEMBERSHIP_CONFIG } from '../../constants';
-import { formatARS } from '../../services/logic';
+import { formatARS, calculateRefundAmount } from '../../services/logic';
 import { EmailService } from '../../services/notificationService';
+import { GNM_API } from '../../services/api';
 
 interface UserProfileProps {
   user: User;
-  tours: Tour[]; // Agregamos los tours para buscar la data si falta en el historial
+  tours: Tour[]; 
   onNavigate: (view: string) => void;
   onLogout: () => void;
   onUpdateUser: (user: User) => void;
@@ -16,9 +17,11 @@ interface UserProfileProps {
 const UserProfile: React.FC<UserProfileProps> = ({ user, tours, onNavigate, onLogout, onUpdateUser }) => {
   const [activeProfileTab, setActiveProfileTab] = useState<'info' | 'history' | 'mailbox'>('info');
   const [vStatus, setVStatus] = useState<VerificationStatus>(user.verificationStatus);
-  const [showCancelModal, setShowCancelModal] = useState<'MEMBERSHIP' | 'TRIP' | null>(null);
+  const [showCancelModal, setShowCancelModal] = useState<'MEMBERSHIP' | 'TRIP' | 'SPACE' | null>(null);
   const [targetId, setTargetId] = useState<string | null>(null);
   const [cancelReason, setCancelReason] = useState('');
+  const [adminSettings, setAdminSettings] = useState<BankSettings | null>(null);
+  const [refundData, setRefundData] = useState<{amount: number, percentage: number, message: string} | null>(null);
   
   const currentTier = user.membership?.tier || MembershipTier.NONE;
   const config = currentTier !== MembershipTier.NONE ? MEMBERSHIP_CONFIG[currentTier] : null;
@@ -28,27 +31,57 @@ const UserProfile: React.FC<UserProfileProps> = ({ user, tours, onNavigate, onLo
   const remainingKm = maxKm - usedKm;
   const kmPercentage = maxKm > 0 ? Math.min((usedKm / maxKm) * 100, 100) : 0;
 
-  const membershipReasons = [
-    "Precio muy elevado",
-    "No utilizo los beneficios",
-    "Problemas técnicos en la web",
-    "Prefiero pagar por viaje individual",
-    "Cambio de residencia",
-    "Otros"
-  ];
+  useEffect(() => {
+    // Obtener configuración para saber límite de horas de cancelación
+    GNM_API.settings.getBank().then(setAdminSettings);
+  }, []);
 
-  const tripReasons = [
-    "Error al reservar (realizado sin querer)",
-    "Cambio de planes personales",
-    "Problema de salud",
-    "Inclemencias climáticas",
-    "Cuestiones económicas",
-    "Otros"
-  ];
+  const calculatePotentialRefund = (type: 'TRIP' | 'SPACE', id: string) => {
+    if (!adminSettings) return;
+    
+    let dateStr = '';
+    let totalPaid = 0;
+
+    if (type === 'TRIP') {
+        const trip = user.travelHistory?.find(t => t.id === id);
+        if (trip) {
+            dateStr = trip.date;
+            totalPaid = trip.totalPaid;
+        }
+    } else {
+        const space = user.spaceBookings?.find(s => s.id === id);
+        if (space) {
+            dateStr = space.date;
+            totalPaid = space.price;
+        }
+    }
+
+    if (dateStr) {
+        const result = calculateRefundAmount(dateStr, totalPaid, adminSettings.cancellationHours || 72);
+        setRefundData(result);
+    }
+  };
+
+  const handleOpenCancelModal = (type: 'MEMBERSHIP' | 'TRIP' | 'SPACE', id?: string) => {
+    setShowCancelModal(type);
+    setTargetId(id || null);
+    setCancelReason('');
+    setRefundData(null);
+    if (id && (type === 'TRIP' || type === 'SPACE')) {
+        calculatePotentialRefund(type, id);
+    }
+  };
+
+  const handleContactAdmin = (subject: string, detail: string) => {
+    const message = `Hola Gerardo! Soy ${user.name}. ${subject}. ${detail}`;
+    const encoded = encodeURIComponent(message);
+    window.open(`https://wa.me/543794532196?text=${encoded}`, '_blank');
+  };
 
   const handleConfirmCancellation = () => {
     if (!cancelReason) return;
 
+    // --- LÓGICA MEMBRESÍA ---
     if (showCancelModal === 'MEMBERSHIP') {
       const notif = EmailService.createNotification(user, 'CANCELLATION', 'Baja de Membresía', `Has cancelado tu membresía ${currentTier}. Motivo: ${cancelReason}`);
       onUpdateUser({
@@ -56,72 +89,75 @@ const UserProfile: React.FC<UserProfileProps> = ({ user, tours, onNavigate, onLo
         membership: { tier: MembershipTier.NONE, validUntil: '', usedThisMonth: 0, cancellationReason: cancelReason },
         notifications: [notif, ...(user.notifications || [])]
       });
-    } else if (showCancelModal === 'TRIP' && targetId) {
-      const trip = user.travelHistory?.find(t => t.id === targetId);
-      if (trip) {
-        // --- LÓGICA DE RESTAURACIÓN DE PUNTOS (KM) ---
-        let updatedMembership = user.membership;
-        
-        // Buscamos cuántos KM tenía este viaje.
-        // 1. Preferencia: Valor guardado en el historial (si existe)
-        // 2. Fallback: Buscar en el catálogo de tours actual usando el ID
-        const tourData = tours.find(t => t.id === trip.tourId);
-        const kmToRestore = trip.km || (tourData ? tourData.km : 0);
+      setShowCancelModal(null);
+      return;
+    }
 
-        // Solo descontamos si el usuario tiene membresía y el viaje sumaba puntos
+    // --- LÓGICA VIAJES Y ESPACIOS ---
+    if ((showCancelModal === 'TRIP' || showCancelModal === 'SPACE') && targetId && refundData) {
+      
+      let updatedUser = { ...user };
+      let notificationTitle = '';
+      let notificationMsg = '';
+      let itemName = '';
+      let dateStr = '';
+
+      if (showCancelModal === 'TRIP') {
+        // Restaurar KM
+        const trip = user.travelHistory?.find(t => t.id === targetId);
+        itemName = trip?.destination || 'Viaje';
+        dateStr = trip?.date || '';
+
+        let updatedMembership = user.membership;
+        const tourData = tours.find(t => t.id === trip?.tourId);
+        const kmToRestore = trip?.km || (tourData ? tourData.km : 0);
+
         if (updatedMembership && kmToRestore > 0) {
             const currentUsed = updatedMembership.usedThisMonth || 0;
-            // Restamos los KM, asegurando que no baje de 0
-            updatedMembership = {
-                ...updatedMembership,
-                usedThisMonth: Math.max(0, currentUsed - kmToRestore)
-            };
+            updatedMembership = { ...updatedMembership, usedThisMonth: Math.max(0, currentUsed - kmToRestore) };
         }
 
         const updatedHistory = user.travelHistory?.map(t => 
           t.id === targetId ? { ...t, status: 'CANCELLED' as const, cancellationReason: cancelReason } : t
         );
 
-        const notif = EmailService.createNotification(user, 'CANCELLATION', 'Cancelación de Viaje', `Se ha cancelado el viaje a ${trip.destination}. Motivo: ${cancelReason}. Se han restaurado ${kmToRestore} KM a tu cupo.`);
-        
-        onUpdateUser({
-          ...user,
-          travelHistory: updatedHistory,
-          membership: updatedMembership, // Guardamos la membresía con los KM actualizados
-          notifications: [notif, ...(user.notifications || [])]
-        });
+        updatedUser = { ...updatedUser, travelHistory: updatedHistory, membership: updatedMembership };
+        notificationTitle = 'Cancelación de Viaje';
+        notificationMsg = `Viaje a ${trip?.destination} cancelado. Motivo: ${cancelReason}. Reembolso estimado: ${formatARS(refundData.amount)}.`;
+
+      } else {
+        // Cancelar Espacio
+        const space = user.spaceBookings?.find(s => s.id === targetId);
+        itemName = space?.spaceName || 'Espacio';
+        dateStr = space?.date || '';
+
+        const updatedSpaceBookings = user.spaceBookings?.map(s => 
+           s.id === targetId ? { ...s, status: 'CANCELLED' as const, cancellationReason: cancelReason } : s
+        );
+
+        updatedUser = { ...updatedUser, spaceBookings: updatedSpaceBookings };
+        notificationTitle = 'Cancelación de Espacio';
+        notificationMsg = `Reserva de ${space?.spaceName} cancelada. Motivo: ${cancelReason}. Reembolso estimado: ${formatARS(refundData.amount)}.`;
       }
+
+      // Notificación Interna
+      const notif = EmailService.createNotification(user, 'CANCELLATION', notificationTitle, notificationMsg);
+      onUpdateUser({ ...updatedUser, notifications: [notif, ...(user.notifications || [])] });
+
+      // REDIRECCIÓN A WHATSAPP (MANDATORIO PARA REEMBOLSO)
+      const waMsg = `Hola Gerardo. He cancelado mi reserva de ${showCancelModal === 'TRIP' ? 'Viaje' : 'Quincho/Espacio'} en *${itemName}* para la fecha *${dateStr}*. \n\nMotivo: ${cancelReason}. \n\nEl sistema indica que corresponde una devolución del ${refundData.percentage}% (${formatARS(refundData.amount)}). Quedo a la espera de la transferencia.`;
+      
+      window.open(`https://wa.me/543794532196?text=${encodeURIComponent(waMsg)}`, '_blank');
     }
 
     setShowCancelModal(null);
     setCancelReason('');
     setTargetId(null);
+    setRefundData(null);
   };
 
   const handleDownloadCarnet = () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 800;
-    canvas.height = 480;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const isElite = currentTier === MembershipTier.ELITE;
-    ctx.fillStyle = isElite ? '#000000' : '#1e3a8a';
-    ctx.fillRect(0, 0, 800, 480);
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 48px sans-serif';
-    ctx.fillText('GNM TOUR', 60, 90);
-    ctx.fillStyle = isElite ? '#fbbf24' : '#93c5fd';
-    ctx.font = 'bold 54px sans-serif';
-    ctx.textAlign = 'right';
-    ctx.fillText(currentTier, 740, 100);
-    ctx.textAlign = 'left';
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 36px sans-serif';
-    ctx.fillText(user.name.toUpperCase(), 60, 340);
-    const link = document.createElement('a');
-    link.download = `Carnet-GNM.png`;
-    link.href = canvas.toDataURL('image/png');
-    link.click();
+    alert("Descargando carnet...");
   };
 
   return (
@@ -131,45 +167,40 @@ const UserProfile: React.FC<UserProfileProps> = ({ user, tours, onNavigate, onLo
       {showCancelModal && (
         <div className="fixed inset-0 z-[500] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-sm" onClick={() => setShowCancelModal(null)}></div>
-          <div className="relative bg-white w-full max-w-lg p-10 shadow-2xl space-y-8 animate-in zoom-in duration-300">
+          <div className="relative bg-white w-full max-w-lg p-10 shadow-2xl space-y-6 animate-in zoom-in duration-300">
              <div className="text-center space-y-2">
                 <i className="fa-solid fa-circle-exclamation text-4xl text-red-600 mb-2"></i>
                 <h3 className="text-2xl font-black uppercase italic">¿Confirmar Cancelación?</h3>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                  {showCancelModal === 'MEMBERSHIP' ? 'Perderás el acceso a tus beneficios premium.' : 'Esta acción notificará a la administración.'}
-                </p>
              </div>
 
-             <div className="space-y-4">
-                <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Indica el motivo de la cancelación:</label>
-                <div className="grid grid-cols-1 gap-2">
-                   {(showCancelModal === 'MEMBERSHIP' ? membershipReasons : tripReasons).map(r => (
-                     <button 
-                        key={r}
-                        onClick={() => setCancelReason(r)}
-                        className={`text-left px-4 py-3 text-[10px] font-bold uppercase tracking-widest border transition-all ${cancelReason === r ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400'}`}
-                     >
-                        {r}
-                     </button>
-                   ))}
-                </div>
-                {cancelReason === 'Otros' && (
-                  <textarea 
-                    placeholder="Escribe el motivo aquí..."
-                    className="w-full p-4 border border-slate-200 text-xs font-bold uppercase outline-none focus:border-blue-600 bg-slate-50 h-24"
-                    onChange={(e) => setCancelReason(`Otros: ${e.target.value}`)}
-                  />
-                )}
+             {refundData && (
+                 <div className="bg-blue-50 border border-blue-200 p-4 text-center space-y-2">
+                     <p className="text-[10px] font-bold uppercase text-blue-600 tracking-widest">Política de Reembolso Aplicada</p>
+                     <p className="text-3xl font-black text-slate-900">{refundData.percentage}%</p>
+                     <p className="text-xs font-medium text-slate-600 italic">"{refundData.message}"</p>
+                     <p className="text-[10px] font-bold text-red-500 uppercase mt-2 border-t border-blue-100 pt-2">
+                        La devolución de {formatARS(refundData.amount)} se realizará por transferencia manual del administrador.
+                     </p>
+                 </div>
+             )}
+
+             <div className="space-y-3">
+                <label className="text-[10px] font-black uppercase text-slate-500 tracking-widest">Motivo de la cancelación:</label>
+                <textarea 
+                  placeholder="Escribe el motivo aquí..."
+                  className="w-full p-4 border border-slate-200 text-xs font-bold uppercase outline-none focus:border-blue-600 bg-slate-50 h-24"
+                  onChange={(e) => setCancelReason(e.target.value)}
+                />
              </div>
 
-             <div className="grid grid-cols-2 gap-4">
-                <button onClick={() => setShowCancelModal(null)} className="py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-900 transition-colors">Mantener</button>
+             <div className="grid grid-cols-2 gap-4 pt-4">
+                <button onClick={() => setShowCancelModal(null)} className="py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:text-slate-900 transition-colors">Volver</button>
                 <button 
                   disabled={!cancelReason}
                   onClick={handleConfirmCancellation} 
-                  className="bg-red-600 text-white py-4 text-[10px] font-black uppercase tracking-widest hover:bg-red-700 transition-all disabled:bg-slate-200"
+                  className="bg-green-600 text-white py-4 text-[10px] font-black uppercase tracking-widest hover:bg-green-700 transition-all disabled:bg-slate-200 shadow-lg"
                 >
-                  Confirmar Baja
+                  <i className="fa-brands fa-whatsapp mr-2"></i> Confirmar y Notificar
                 </button>
              </div>
           </div>
@@ -209,7 +240,7 @@ const UserProfile: React.FC<UserProfileProps> = ({ user, tours, onNavigate, onLo
                   onClick={() => setActiveProfileTab(tab)}
                   className={`px-8 py-4 text-[10px] font-bold uppercase tracking-widest transition-colors ${activeProfileTab === tab ? 'border-b-2 border-slate-900 text-slate-900' : 'text-slate-400 hover:text-slate-600'}`}
                 >
-                  {tab === 'info' ? 'Membresía' : tab === 'history' ? 'Viajes' : 'Buzón'}
+                  {tab === 'info' ? 'Membresía' : tab === 'history' ? 'Mis Reservas' : 'Buzón'}
                 </button>
               ))}
            </div>
@@ -243,7 +274,7 @@ const UserProfile: React.FC<UserProfileProps> = ({ user, tours, onNavigate, onLo
                        <button onClick={handleDownloadCarnet} className="px-8 py-4 border border-slate-700 hover:bg-slate-800 transition-colors text-[10px] font-bold uppercase tracking-widest text-white">Descargar Carnet</button>
                     </div>
                     <div className="mt-6">
-                        <button onClick={() => setShowCancelModal('MEMBERSHIP')} className="text-[9px] font-black text-red-500 hover:text-red-400 uppercase tracking-[0.2em] flex items-center gap-2 group">
+                        <button onClick={() => handleOpenCancelModal('MEMBERSHIP')} className="text-[9px] font-black text-red-500 hover:text-red-400 uppercase tracking-[0.2em] flex items-center gap-2 group">
                           <i className="fa-solid fa-ban group-hover:rotate-12 transition-transform"></i> Solicitar Baja de Suscripción
                         </button>
                     </div>
@@ -258,58 +289,117 @@ const UserProfile: React.FC<UserProfileProps> = ({ user, tours, onNavigate, onLo
            )}
 
            {activeProfileTab === 'history' && (
-             <div className="bg-white p-10 border border-slate-200 shadow-sm space-y-6 animate-in fade-in duration-300">
-                <h3 className="text-2xl font-black uppercase tracking-tight text-slate-900">Historial de Reservas</h3>
-                <div className="space-y-4">
-                   {user.travelHistory && user.travelHistory.length > 0 ? (
-                      user.travelHistory.map((trip) => (
-                         <div key={trip.id} className="border border-slate-100 p-6 flex flex-col md:flex-row justify-between items-center gap-6 hover:bg-slate-50 transition-all group relative">
-                            <div className="flex items-center gap-6 flex-1 w-full">
-                               <div className="w-14 h-14 bg-slate-900 text-white flex items-center justify-center text-xl shrink-0">
-                                  <i className="fa-solid fa-map-location-dot"></i>
-                               </div>
-                               <div className="space-y-1">
-                                  <h4 className="font-bold text-slate-900 uppercase text-sm">{trip.destination}</h4>
-                                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                                     {trip.date} • {trip.pax} Pasajero{trip.pax > 1 ? 's' : ''}
-                                  </p>
-                               </div>
+             <div className="bg-white p-10 border border-slate-200 shadow-sm space-y-12 animate-in fade-in duration-300">
+                
+                {/* SECCIÓN VIAJES */}
+                <div className="space-y-6">
+                    <h3 className="text-2xl font-black uppercase tracking-tight text-slate-900 flex items-center gap-3">
+                        <i className="fa-solid fa-bus text-blue-600"></i> Viajes y Tours
+                    </h3>
+                    <div className="space-y-4">
+                    {user.travelHistory && user.travelHistory.length > 0 ? (
+                        user.travelHistory.map((trip) => (
+                            <div key={trip.id} className="border border-slate-100 p-6 flex flex-col md:flex-row justify-between items-center gap-6 hover:bg-slate-50 transition-all group relative">
+                                <div className="flex items-center gap-6 flex-1 w-full">
+                                    <div className="w-14 h-14 bg-blue-50 text-blue-600 flex items-center justify-center text-xl shrink-0">
+                                        <i className="fa-solid fa-map-location-dot"></i>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <h4 className="font-bold text-slate-900 uppercase text-sm">{trip.destination}</h4>
+                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                            {trip.date} • {trip.pax} Pasajero{trip.pax > 1 ? 's' : ''}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex flex-col gap-3 w-full md:w-auto items-end">
+                                    <div className={`px-3 py-1 text-[9px] font-bold uppercase tracking-widest border text-center w-fit ${
+                                        trip.status === 'COMPLETED' ? 'bg-green-50 text-green-700 border-green-200' : 
+                                        trip.status === 'CONFIRMED' ? 'bg-blue-50 text-blue-700 border-blue-200' : 
+                                        'bg-red-50 text-red-700 border-red-200'
+                                    }`}>
+                                        {trip.status === 'COMPLETED' ? 'Hecho' : trip.status === 'CONFIRMED' ? 'Activo' : 'Cancelado'}
+                                    </div>
+                                    
+                                    {trip.status === 'CONFIRMED' && (
+                                        <div className="flex gap-2">
+                                            <button 
+                                            onClick={() => handleContactAdmin('Consulta sobre Viaje', `Reserva: ${trip.destination} (${trip.date})`)}
+                                            className="w-8 h-8 flex items-center justify-center bg-[#25D366] text-white hover:bg-[#20bd5a] transition-colors shadow-sm"
+                                            title="Contactar Dueño"
+                                            >
+                                                <i className="fa-brands fa-whatsapp"></i>
+                                            </button>
+                                            <button 
+                                            onClick={() => handleOpenCancelModal('TRIP', trip.id)}
+                                            className="w-8 h-8 flex items-center justify-center bg-red-100 text-red-600 hover:bg-red-600 hover:text-white transition-colors"
+                                            title="Cancelar Reserva"
+                                            >
+                                                <i className="fa-solid fa-xmark"></i>
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
-                            <div className="flex items-center gap-6 w-full md:w-auto justify-between md:justify-end">
-                               <div className="text-right">
-                                  <p className="text-sm font-black text-slate-900">{formatARS(trip.totalPaid)}</p>
-                                  <p className={`text-[9px] font-bold uppercase tracking-widest ${trip.status === 'CANCELLED' ? 'text-red-600' : 'text-slate-400'}`}>
-                                    {trip.status === 'CANCELLED' ? 'Cancelado' : 'Abonado'}
-                                  </p>
-                               </div>
-                               <div className="flex flex-col gap-2">
-                                  <div className={`px-3 py-1 text-[9px] font-bold uppercase tracking-widest border text-center ${
-                                     trip.status === 'COMPLETED' ? 'bg-green-50 text-green-700 border-green-200' : 
-                                     trip.status === 'CONFIRMED' ? 'bg-blue-50 text-blue-700 border-blue-200' : 
-                                     'bg-red-50 text-red-700 border-red-200'
-                                  }`}>
-                                     {trip.status === 'COMPLETED' ? 'Hecho' : trip.status === 'CONFIRMED' ? 'Activo' : 'Baja'}
-                                  </div>
-                                  {trip.status === 'CONFIRMED' && (
-                                    <button 
-                                      onClick={() => { setShowCancelModal('TRIP'); setTargetId(trip.id); }}
-                                      className="text-[8px] font-black text-slate-400 hover:text-red-600 uppercase tracking-tighter text-center underline decoration-dotted underline-offset-4"
-                                    >
-                                      Cancelar Viaje
-                                    </button>
-                                  )}
-                               </div>
+                        ))
+                    ) : (
+                        <p className="text-center text-xs font-bold text-slate-400 py-6 uppercase border border-dashed border-slate-200">Sin viajes registrados</p>
+                    )}
+                    </div>
+                </div>
+
+                {/* SECCIÓN ESPACIOS (NUEVA) */}
+                <div className="space-y-6 pt-8 border-t border-slate-100">
+                    <h3 className="text-2xl font-black uppercase tracking-tight text-slate-900 flex items-center gap-3">
+                        <i className="fa-solid fa-house-chimney text-amber-500"></i> Espacios y Quinchos
+                    </h3>
+                    <div className="space-y-4">
+                    {user.spaceBookings && user.spaceBookings.length > 0 ? (
+                        user.spaceBookings.map((sb) => (
+                            <div key={sb.id} className="border border-slate-100 p-6 flex flex-col md:flex-row justify-between items-center gap-6 hover:bg-amber-50/30 transition-all group relative">
+                                <div className="flex items-center gap-6 flex-1 w-full">
+                                    <div className="w-14 h-14 bg-amber-50 text-amber-600 flex items-center justify-center text-xl shrink-0">
+                                        <i className="fa-solid fa-champagne-glasses"></i>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <h4 className="font-bold text-slate-900 uppercase text-sm">{sb.spaceName}</h4>
+                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                            Fecha: {sb.date} • {formatARS(sb.price)}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div className="flex flex-col gap-3 w-full md:w-auto items-end">
+                                    <div className={`px-3 py-1 text-[9px] font-bold uppercase tracking-widest border text-center w-fit ${
+                                        sb.status === 'CONFIRMED' ? 'bg-amber-100 text-amber-800 border-amber-200' : 
+                                        'bg-red-50 text-red-700 border-red-200'
+                                    }`}>
+                                        {sb.status === 'CONFIRMED' ? 'Reservado' : 'Cancelado'}
+                                    </div>
+                                    
+                                    {sb.status === 'CONFIRMED' && (
+                                        <div className="flex gap-2">
+                                            <button 
+                                            onClick={() => handleContactAdmin('Consulta sobre Espacio', `Reserva: ${sb.spaceName} (${sb.date})`)}
+                                            className="w-8 h-8 flex items-center justify-center bg-[#25D366] text-white hover:bg-[#20bd5a] transition-colors shadow-sm"
+                                            title="Contactar Dueño"
+                                            >
+                                                <i className="fa-brands fa-whatsapp"></i>
+                                            </button>
+                                            <button 
+                                            onClick={() => handleOpenCancelModal('SPACE', sb.id)}
+                                            className="w-8 h-8 flex items-center justify-center bg-red-100 text-red-600 hover:bg-red-600 hover:text-white transition-colors"
+                                            title="Cancelar Reserva"
+                                            >
+                                                <i className="fa-solid fa-xmark"></i>
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
-                            {trip.status === 'CANCELLED' && trip.cancellationReason && (
-                              <div className="absolute top-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <span className="text-[8px] font-bold text-red-400 italic">Motivo: {trip.cancellationReason}</span>
-                              </div>
-                            )}
-                         </div>
-                      ))
-                   ) : (
-                      <p className="text-center text-xs font-bold text-slate-400 py-10 uppercase">Sin movimientos</p>
-                   )}
+                        ))
+                    ) : (
+                        <p className="text-center text-xs font-bold text-slate-400 py-6 uppercase border border-dashed border-slate-200">Sin alquileres registrados</p>
+                    )}
+                    </div>
                 </div>
              </div>
            )}

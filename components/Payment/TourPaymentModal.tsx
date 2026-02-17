@@ -150,6 +150,12 @@ const TourPaymentModal: React.FC<TourPaymentModalProps> = ({ tour, breakdown, us
             <div className="space-y-6">
               {bankDetails && (
                 <>
+                   {/* SE AGREGÓ CAMPO TITULAR */}
+                   <div className="p-4 bg-slate-50 border border-slate-200 rounded-none mb-2">
+                      <p className="text-[9px] font-bold text-slate-500 uppercase tracking-widest">Titular</p>
+                      <p className="font-bold text-slate-900 uppercase">{bankDetails.owner}</p>
+                   </div>
+                   
                    <div className="p-4 border border-slate-300 flex justify-between items-center rounded-none">
                       <div><p className="text-[9px] font-bold text-slate-500 uppercase">Alias</p><p className="font-bold text-slate-900 uppercase">{bankDetails.alias}</p></div>
                       <button onClick={() => copyToClipboard(bankDetails.alias)} className="text-xs font-bold uppercase text-blue-600 hover:text-blue-800">Copiar</button>

@@ -74,15 +74,23 @@ const TourEditorModal: React.FC<TourEditorModalProps> = ({ tour, onSave, onCance
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 5 * 1024 * 1024) {
-          alert("La imagen es demasiado grande. Máximo 5MB.");
+      // VALIDACIÓN IMPORTANTE: Límite de 4MB para no saturar MySQL ni el navegador
+      if (file.size > 4 * 1024 * 1024) {
+          alert("La imagen es demasiado grande (Máx 4MB). Por favor, comprímela antes de subirla.");
+          e.target.value = ''; // Reset input
           return;
       }
+      
       const reader = new FileReader();
       reader.onloadend = () => {
         setFormData(prev => ({ ...prev, images: [reader.result as string] }));
       };
-      reader.readAsDataURL(file);
+      
+      try {
+        reader.readAsDataURL(file);
+      } catch(err) {
+        alert("Error al procesar la imagen.");
+      }
     }
   };
 
@@ -154,6 +162,7 @@ const TourEditorModal: React.FC<TourEditorModalProps> = ({ tour, onSave, onCance
                   className="text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-none file:border-0 file:text-[10px] file:font-bold file:uppercase file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
                 />
               </div>
+              <p className="text-[9px] text-slate-400">Máximo 4MB. Se recomienda JPG optimizado.</p>
             </div>
           </div>
 
